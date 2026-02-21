@@ -15,8 +15,9 @@ let humChar = null;
 let sysInfoChar = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 3;
+let pollingInterval = null;
 
-// --- DOM элементы (создадим их динамически) ---
+// --- DOM элементы ---
 let statusLed, statusText, tempValue, humValue, effValue, logDiv;
 
 // --- Функция создания интерфейса ---
@@ -191,6 +192,7 @@ function updateConnectionStatus(connected) {
         statusLed.style.background = '#4caf50';
         statusLed.style.animation = 'pulse 2s infinite';
         statusText.textContent = 'Подключено';
+        statusText.style.color = '#000000';
         log('✅ Подключено к устройству');
         
         // Скрываем кнопку
@@ -200,23 +202,29 @@ function updateConnectionStatus(connected) {
         statusLed.style.background = '#f44336';
         statusLed.style.animation = 'none';
         statusText.textContent = 'Отключено';
+        statusText.style.color = '#000000';
         log('❌ Отключено');
         
         // Показываем кнопку
         const connectBtn = document.getElementById('connectBtn');
         if (connectBtn) connectBtn.style.display = 'block';
         
-        // Очищаем значения
+        // Очищаем значения при реальном отключении
         if (tempValue) tempValue.textContent = '--';
         if (humValue) humValue.textContent = '--';
         if (effValue) effValue.textContent = '--';
+        
+        // Останавливаем опрос
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
     }
 }
 
 // --- Обработчики данных ---
 function handleTempUpdate(event) {
     const value = new TextDecoder().decode(event.target.value);
-    // Убираем префикс T: если он есть
     const numStr = value.replace('T:', '');
     const temp = parseFloat(numStr);
     if (!isNaN(temp) && tempValue) {
@@ -244,8 +252,24 @@ function handleSysInfoUpdate(event) {
             effValue.textContent = eff.toFixed(1);
             log(`📈 Эффективность: ${eff.toFixed(1)}%/мин`);
         }
-    } else if (value === 'ping') {
-        // Игнорируем пинги
+    }
+    // Игнорируем пинги и другие сообщения
+}
+
+// --- Функция чтения всех характеристик ---
+async function readAllCharacteristics() {
+    if (!device || !device.gatt.connected) return;
+    
+    try {
+        const temp = await tempChar.readValue();
+        const hum = await humChar.readValue();
+        const sys = await sysInfoChar.readValue();
+        
+        handleTempUpdate({ target: { value: temp } });
+        handleHumUpdate({ target: { value: hum } });
+        handleSysInfoUpdate({ target: { value: sys } });
+    } catch (e) {
+        // Игнорируем ошибки чтения - они могут возникать, если соединение прервалось
     }
 }
 
@@ -285,44 +309,72 @@ async function connect() {
         humChar = await service.getCharacteristic(BLE_CHAR_HUM_UUID);
         sysInfoChar = await service.getCharacteristic(BLE_CHAR_SYS_INFO_UUID);
 
-        // Включаем уведомления
-        log('📨 Включение уведомлений...');
+        // ========== ИСПРАВЛЕННАЯ ОБРАБОТКА ОШИБОК ==========
+        log('📨 Настройка уведомлений...');
         
-        await tempChar.startNotifications();
-        tempChar.addEventListener('characteristicvaluechanged', handleTempUpdate);
-        log('✅ Уведомления температуры включены');
+        // Пытаемся включить уведомления для температуры
+        try {
+            await tempChar.startNotifications();
+            tempChar.addEventListener('characteristicvaluechanged', handleTempUpdate);
+            log('✅ Уведомления температуры включены');
+        } catch (e) {
+            log('⚠️ Уведомления температуры не поддерживаются, данные будем читать вручную');
+        }
         
-        await humChar.startNotifications();
-        humChar.addEventListener('characteristicvaluechanged', handleHumUpdate);
-        log('✅ Уведомления влажности включены');
+        // Пытаемся включить уведомления для влажности
+        try {
+            await humChar.startNotifications();
+            humChar.addEventListener('characteristicvaluechanged', handleHumUpdate);
+            log('✅ Уведомления влажности включены');
+        } catch (e) {
+            log('⚠️ Уведомления влажности не поддерживаются, данные будем читать вручную');
+        }
         
-        await sysInfoChar.startNotifications();
-        sysInfoChar.addEventListener('characteristicvaluechanged', handleSysInfoUpdate);
-        log('✅ Уведомления системы включены');
+        // Пытаемся включить уведомления для системы
+        try {
+            await sysInfoChar.startNotifications();
+            sysInfoChar.addEventListener('characteristicvaluechanged', handleSysInfoUpdate);
+            log('✅ Уведомления системы включены');
+        } catch (e) {
+            log('⚠️ Уведомления системы не поддерживаются');
+        }
 
         // Читаем начальные значения
         log('📖 Чтение начальных значений...');
-        const tempValue = await tempChar.readValue();
-        const humValue = await humChar.readValue();
-        const sysValue = await sysInfoChar.readValue();
-        
-        handleTempUpdate({ target: { value: tempValue } });
-        handleHumUpdate({ target: { value: humValue } });
-        handleSysInfoUpdate({ target: { value: sysValue } });
+        await readAllCharacteristics();
 
+        // Запускаем периодическое чтение (каждые 2 секунды) как запасной вариант
+        if (pollingInterval) clearInterval(pollingInterval);
+        pollingInterval = setInterval(readAllCharacteristics, 2000);
+        log('🔄 Запущен резервный опрос данных (каждые 2 сек)');
+
+        // Устанавливаем статус подключения
         updateConnectionStatus(true);
         reconnectAttempts = 0;
 
     } catch (error) {
-        log('❌ Ошибка: ' + error.message);
+        log('❌ Ошибка подключения: ' + error.message);
         if (statusText) statusText.textContent = 'Ошибка: ' + error.message;
-        updateConnectionStatus(false);
         
-        // Пробуем переподключиться
-        reconnectAttempts++;
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            log(`🔄 Попытка переподключения ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
-            setTimeout(connect, 2000);
+        // Если устройство было подключено, но ошибка в настройке, не сбрасываем статус сразу
+        if (device && device.gatt.connected) {
+            log('⚠️ Устройство подключено, но есть проблемы с настройкой');
+            // Пытаемся хотя бы читать данные
+            try {
+                await readAllCharacteristics();
+                updateConnectionStatus(true);
+            } catch (e) {
+                updateConnectionStatus(false);
+            }
+        } else {
+            updateConnectionStatus(false);
+            
+            // Пробуем переподключиться
+            reconnectAttempts++;
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                log(`🔄 Попытка переподключения ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
+                setTimeout(connect, 2000);
+            }
         }
     }
 }
