@@ -1,6 +1,6 @@
-// index.js - ФИНАЛЬНАЯ СТАБИЛЬНАЯ ВЕРСИЯ
+// index.js - ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ
 
-// --- НАСТРОЙКА UUID (Должны совпадать с кодом ESP32) ---
+// --- UUID сервисов и характеристик (должны совпадать с ESP32) ---
 const BLE_SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
 const BLE_CHAR_TEMP_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a2';
 const BLE_CHAR_HUM_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a3';
@@ -13,59 +13,214 @@ let service = null;
 let tempChar = null;
 let humChar = null;
 let sysInfoChar = null;
-let pollingInterval = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 3;
 
-// --- DOM элементы ---
-const statusLed = document.querySelector('.status-led');
-const statusText = document.getElementById('statusText');
-const tempSpan = document.getElementById('tempValue');
-const humSpan = document.getElementById('humValue');
-const effSpan = document.getElementById('effValue');
-const logDiv = document.getElementById('log');
+// --- DOM элементы (создадим их динамически) ---
+let statusLed, statusText, tempValue, humValue, effValue, logDiv;
 
-// --- Вспомогательные функции ---
+// --- Функция создания интерфейса ---
+function createUI() {
+    const container = document.querySelector('.container');
+    if (!container) return;
+    
+    // Очищаем контейнер
+    container.innerHTML = '';
+    
+    // Заголовок
+    const title = document.createElement('h1');
+    title.textContent = '🎸 Guitar Cabinet Controller';
+    container.appendChild(title);
+    
+    // Статус
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'status';
+    statusDiv.style.cssText = `
+        background: #e3f2fd;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    `;
+    
+    statusLed = document.createElement('div');
+    statusLed.className = 'status-led';
+    statusLed.style.cssText = `
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #f44336;
+        transition: background 0.3s;
+    `;
+    
+    statusText = document.createElement('span');
+    statusText.id = 'statusText';
+    statusText.textContent = 'Ожидание подключения...';
+    statusText.style.flex = '1';
+    
+    statusDiv.appendChild(statusLed);
+    statusDiv.appendChild(statusText);
+    container.appendChild(statusDiv);
+    
+    // Панель датчиков
+    const sensorsDiv = document.createElement('div');
+    sensorsDiv.style.cssText = `
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-bottom: 20px;
+    `;
+    
+    // Температура
+    const tempDiv = document.createElement('div');
+    tempDiv.style.cssText = `
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+    `;
+    tempDiv.innerHTML = `
+        <div style="color: #666; font-size: 14px; margin-bottom: 5px;">Температура</div>
+        <div style="font-size: 32px; font-weight: bold; color: #2196f3;">
+            <span id="tempValue">--</span>°C
+        </div>
+    `;
+    
+    // Влажность
+    const humDiv = document.createElement('div');
+    humDiv.style.cssText = `
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+    `;
+    humDiv.innerHTML = `
+        <div style="color: #666; font-size: 14px; margin-bottom: 5px;">Влажность</div>
+        <div style="font-size: 32px; font-weight: bold; color: #4caf50;">
+            <span id="humValue">--</span>%
+        </div>
+    `;
+    
+    // Эффективность
+    const effDiv = document.createElement('div');
+    effDiv.style.cssText = `
+        grid-column: span 2;
+        background: #fff3e0;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+    `;
+    effDiv.innerHTML = `
+        <div style="color: #666; font-size: 14px; margin-bottom: 5px;">Эффективность</div>
+        <div style="font-size: 24px; font-weight: bold; color: #ff9800;">
+            <span id="effValue">--</span>%/мин
+        </div>
+    `;
+    
+    sensorsDiv.appendChild(tempDiv);
+    sensorsDiv.appendChild(humDiv);
+    sensorsDiv.appendChild(effDiv);
+    container.appendChild(sensorsDiv);
+    
+    // Лог
+    logDiv = document.createElement('div');
+    logDiv.id = 'log';
+    logDiv.style.cssText = `
+        margin-top: 20px;
+        padding: 10px;
+        background: #f5f5f5;
+        border-radius: 5px;
+        font-family: monospace;
+        font-size: 12px;
+        max-height: 150px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        margin-bottom: 20px;
+    `;
+    container.appendChild(logDiv);
+    
+    // Кнопка подключения
+    const connectBtn = document.createElement('button');
+    connectBtn.id = 'connectBtn';
+    connectBtn.textContent = '🔌 Подключиться к устройству';
+    connectBtn.style.cssText = `
+        background: #4caf50;
+        color: white;
+        border: none;
+        padding: 15px 30px;
+        border-radius: 10px;
+        font-size: 16px;
+        cursor: pointer;
+        width: 100%;
+        transition: background 0.3s;
+    `;
+    connectBtn.onmouseover = () => { connectBtn.style.background = '#45a049'; };
+    connectBtn.onmouseout = () => { connectBtn.style.background = '#4caf50'; };
+    connectBtn.onclick = connect;
+    container.appendChild(connectBtn);
+    
+    // Получаем ссылки на элементы
+    tempValue = document.getElementById('tempValue');
+    humValue = document.getElementById('humValue');
+    effValue = document.getElementById('effValue');
+}
+
+// --- Функция логирования ---
 function log(message) {
-    const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timestamp = new Date().toLocaleTimeString('ru-RU', { 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        second: '2-digit' 
+    });
     const logMessage = `${timestamp}: ${message}`;
     console.log(logMessage);
+    
     if (logDiv) {
         logDiv.innerHTML += logMessage + '<br>';
         logDiv.scrollTop = logDiv.scrollHeight;
     }
 }
 
+// --- Обновление статуса подключения ---
 function updateConnectionStatus(connected) {
+    if (!statusLed || !statusText) return;
+    
     if (connected) {
-        statusLed.className = 'status-led status-led-connected';
+        statusLed.style.background = '#4caf50';
+        statusLed.style.animation = 'pulse 2s infinite';
         statusText.textContent = 'Подключено';
         log('✅ Подключено к устройству');
+        
+        // Скрываем кнопку
+        const connectBtn = document.getElementById('connectBtn');
+        if (connectBtn) connectBtn.style.display = 'none';
     } else {
-        statusLed.className = 'status-led';
+        statusLed.style.background = '#f44336';
+        statusLed.style.animation = 'none';
         statusText.textContent = 'Отключено';
         log('❌ Отключено');
-        // Показываем кнопку подключения снова
-        const connectBtn = document.querySelector('.connect-btn');
+        
+        // Показываем кнопку
+        const connectBtn = document.getElementById('connectBtn');
         if (connectBtn) connectBtn.style.display = 'block';
-        // Очищаем значения на странице
-        if (tempSpan) tempSpan.textContent = '--';
-        if (humSpan) humSpan.textContent = '--';
-        if (effSpan) effSpan.textContent = '--';
-        // Останавливаем опрос, если он был активен
-        if (pollingInterval) {
-            clearInterval(pollingInterval);
-            pollingInterval = null;
-        }
+        
+        // Очищаем значения
+        if (tempValue) tempValue.textContent = '--';
+        if (humValue) humValue.textContent = '--';
+        if (effValue) effValue.textContent = '--';
     }
 }
 
-// --- Обработчики входящих данных ---
+// --- Обработчики данных ---
 function handleTempUpdate(event) {
     const value = new TextDecoder().decode(event.target.value);
-    // Ожидаем формат "T:25.5" или просто "25.5"
+    // Убираем префикс T: если он есть
     const numStr = value.replace('T:', '');
     const temp = parseFloat(numStr);
-    if (!isNaN(temp) && tempSpan) {
-        tempSpan.textContent = temp.toFixed(1);
+    if (!isNaN(temp) && tempValue) {
+        tempValue.textContent = temp.toFixed(1);
         log(`🌡️ Температура: ${temp.toFixed(1)}°C`);
     }
 }
@@ -74,8 +229,8 @@ function handleHumUpdate(event) {
     const value = new TextDecoder().decode(event.target.value);
     const numStr = value.replace('H:', '');
     const hum = parseFloat(numStr);
-    if (!isNaN(hum) && humSpan) {
-        humSpan.textContent = hum.toFixed(1);
+    if (!isNaN(hum) && humValue) {
+        humValue.textContent = hum.toFixed(1);
         log(`💧 Влажность: ${hum.toFixed(1)}%`);
     }
 }
@@ -85,74 +240,41 @@ function handleSysInfoUpdate(event) {
     if (value.startsWith('E:') || value.startsWith('eff:')) {
         const numStr = value.replace('E:', '').replace('eff:', '');
         const eff = parseFloat(numStr);
-        if (!isNaN(eff) && effSpan) {
-            effSpan.textContent = eff.toFixed(1);
+        if (!isNaN(eff) && effValue) {
+            effValue.textContent = eff.toFixed(1);
             log(`📈 Эффективность: ${eff.toFixed(1)}%/мин`);
         }
     } else if (value === 'ping') {
-        // Игнорируем служебные сообщения
+        // Игнорируем пинги
     }
 }
 
-// --- Функции для чтения данных ---
-async function readAllCharacteristics() {
-    if (!device || !device.gatt.connected) return;
-    try {
-        const tempValue = await tempChar.readValue();
-        const humValue = await humChar.readValue();
-        const sysValue = await sysInfoChar.readValue();
-        // Вызываем обработчики вручную
-        handleTempUpdate({ target: { value: tempValue } });
-        handleHumUpdate({ target: { value: humValue } });
-        handleSysInfoUpdate({ target: { value: sysValue } });
-    } catch (e) {
-        log('⚠️ Ошибка при чтении характеристик: ' + e.message);
-    }
-}
-
-// --- Режимы работы (Уведомления или Опрос) ---
-async function setupNotifications() {
-    log('📨 Включение уведомлений...');
-    await tempChar.startNotifications();
-    tempChar.addEventListener('characteristicvaluechanged', handleTempUpdate);
-    await humChar.startNotifications();
-    humChar.addEventListener('characteristicvaluechanged', handleHumUpdate);
-    await sysInfoChar.startNotifications();
-    sysInfoChar.addEventListener('characteristicvaluechanged', handleSysInfoUpdate);
-    log('✅ Уведомления включены');
-}
-
-function startPolling() {
-    log('🔄 Запуск режима опроса (каждые 2 секунды)');
-    // Читаем сразу после запуска
-    readAllCharacteristics();
-    // И запускаем интервал
-    pollingInterval = setInterval(readAllCharacteristics, 2000);
+// --- Обработчик отключения ---
+function onDisconnected() {
+    log('❌ Устройство отключилось');
+    updateConnectionStatus(false);
+    device = null;
+    server = null;
 }
 
 // --- Основная функция подключения ---
 async function connect() {
     try {
-        // Скрываем кнопку и очищаем статус
-        const connectBtn = document.querySelector('.connect-btn');
-        if (connectBtn) connectBtn.style.display = 'none';
-        updateConnectionStatus(false);
-        
         log('🔍 Поиск устройств...');
-        statusText.textContent = 'Поиск...';
-
+        if (statusText) statusText.textContent = 'Поиск...';
+        
         device = await navigator.bluetooth.requestDevice({
             filters: [{ namePrefix: 'GuitarCabinet' }],
             optionalServices: [BLE_SERVICE_UUID]
         });
 
         log('✅ Найдено: ' + device.name);
-        statusText.textContent = 'Найдено: ' + device.name;
+        if (statusText) statusText.textContent = 'Найдено: ' + device.name;
 
         device.addEventListener('gattserverdisconnected', onDisconnected);
 
         log('🔌 Подключение...');
-        statusText.textContent = 'Подключение...';
+        if (statusText) statusText.textContent = 'Подключение...';
         server = await device.gatt.connect();
 
         log('📡 Получение сервиса...');
@@ -163,86 +285,69 @@ async function connect() {
         humChar = await service.getCharacteristic(BLE_CHAR_HUM_UUID);
         sysInfoChar = await service.getCharacteristic(BLE_CHAR_SYS_INFO_UUID);
 
-        // Сначала читаем начальные значения
-        await readAllCharacteristics();
+        // Включаем уведомления
+        log('📨 Включение уведомлений...');
+        
+        await tempChar.startNotifications();
+        tempChar.addEventListener('characteristicvaluechanged', handleTempUpdate);
+        log('✅ Уведомления температуры включены');
+        
+        await humChar.startNotifications();
+        humChar.addEventListener('characteristicvaluechanged', handleHumUpdate);
+        log('✅ Уведомления влажности включены');
+        
+        await sysInfoChar.startNotifications();
+        sysInfoChar.addEventListener('characteristicvaluechanged', handleSysInfoUpdate);
+        log('✅ Уведомления системы включены');
 
-        // Пытаемся включить уведомления, если не получится - переходим в режим опроса
-        try {
-            await setupNotifications();
-        } catch (e) {
-            log('⚠️ Не удалось включить уведомления: ' + e.message);
-            startPolling();
-        }
+        // Читаем начальные значения
+        log('📖 Чтение начальных значений...');
+        const tempValue = await tempChar.readValue();
+        const humValue = await humChar.readValue();
+        const sysValue = await sysInfoChar.readValue();
+        
+        handleTempUpdate({ target: { value: tempValue } });
+        handleHumUpdate({ target: { value: humValue } });
+        handleSysInfoUpdate({ target: { value: sysValue } });
 
         updateConnectionStatus(true);
+        reconnectAttempts = 0;
 
     } catch (error) {
         log('❌ Ошибка: ' + error.message);
-        statusText.textContent = 'Ошибка: ' + error.message;
+        if (statusText) statusText.textContent = 'Ошибка: ' + error.message;
         updateConnectionStatus(false);
-        // Показываем кнопку снова в случае ошибки
-        const connectBtn = document.querySelector('.connect-btn');
-        if (connectBtn) connectBtn.style.display = 'block';
+        
+        // Пробуем переподключиться
+        reconnectAttempts++;
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            log(`🔄 Попытка переподключения ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
+            setTimeout(connect, 2000);
+        }
     }
 }
 
-// --- Обработчик отключения ---
-function onDisconnected() {
-    updateConnectionStatus(false);
-    device = null;
-    server = null;
-}
-
-// --- Инициализация страницы ---
+// --- Инициализация при загрузке ---
 window.addEventListener('load', () => {
-    // Создаем кнопку подключения, если её нет в HTML
-    if (!document.querySelector('.connect-btn')) {
-        const container = document.querySelector('.container');
-        const connectBtn = document.createElement('button');
-        connectBtn.className = 'connect-btn';
-        connectBtn.textContent = '🔌 Подключиться к устройству';
-        connectBtn.style.cssText = `
-            background: #4caf50;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 10px;
-            font-size: 16px;
-            cursor: pointer;
-            width: 100%;
-            margin-top: 20px;
-            transition: background 0.3s;
-        `;
-        connectBtn.onmouseover = () => { connectBtn.style.background = '#45a049'; };
-        connectBtn.onmouseout = () => { connectBtn.style.background = '#4caf50'; };
-        connectBtn.onclick = connect;
-        container.appendChild(connectBtn);
-    }
-
-    // Создаем панель лога, если её нет
-    if (!logDiv) {
-        const container = document.querySelector('.container');
-        const newLogDiv = document.createElement('div');
-        newLogDiv.id = 'log';
-        newLogDiv.style.cssText = `
-            margin-top: 20px;
-            padding: 10px;
-            background: #f5f5f5;
-            border-radius: 5px;
-            font-family: monospace;
-            font-size: 12px;
-            max-height: 150px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-        `;
-        container.appendChild(newLogDiv);
-    }
-
+    // Создаем интерфейс
+    createUI();
+    
+    // Добавляем анимацию пульсации
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    `;
+    document.head.appendChild(style);
+    
     log('✅ Страница загружена. Нажмите кнопку для подключения.');
 });
 
 // --- Проверка поддержки Web Bluetooth ---
 if (!navigator.bluetooth) {
-    log('❌ Web Bluetooth не поддерживается в этом браузере.');
+    log('❌ Web Bluetooth не поддерживается в этом браузере');
     if (statusText) statusText.textContent = 'Web Bluetooth не поддерживается';
 }
