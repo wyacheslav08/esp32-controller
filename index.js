@@ -157,8 +157,14 @@ function createUI() {
         width: 100%;
         transition: background 0.3s;
     `;
-    // И добавьте кнопку в createUI():
+    connectBtn.onmouseover = () => { connectBtn.style.background = '#45a049'; };
+    connectBtn.onmouseout = () => { connectBtn.style.background = '#4caf50'; };
+    connectBtn.onclick = connect;
+    container.appendChild(connectBtn);
+    
+    // Кнопка сброса Bluetooth
     const resetBtn = document.createElement('button');
+    resetBtn.id = 'resetBtn';
     resetBtn.textContent = '🔄 Сброс Bluetooth';
     resetBtn.style.cssText = `
         background: #ff9800;
@@ -176,11 +182,6 @@ function createUI() {
     resetBtn.onmouseout = () => { resetBtn.style.background = '#ff9800'; };
     resetBtn.onclick = resetBluetooth;
     container.appendChild(resetBtn);
-
-    connectBtn.onmouseover = () => { connectBtn.style.background = '#45a049'; };
-    connectBtn.onmouseout = () => { connectBtn.style.background = '#4caf50'; };
-    connectBtn.onclick = connect;
-    container.appendChild(connectBtn);
     
     // Получаем ссылки на элементы
     tempValue = document.getElementById('tempValue');
@@ -188,15 +189,42 @@ function createUI() {
     effValue = document.getElementById('effValue');
 }
 
-// Добавьте эту функцию
+// --- Функция сброса Bluetooth ---
 function resetBluetooth() {
     if (device) {
-        device.gatt.disconnect();
+        try {
+            if (device.gatt.connected) {
+                device.gatt.disconnect();
+            }
+        } catch (e) {
+            log('⚠️ Ошибка при отключении: ' + e.message);
+        }
         device = null;
         server = null;
     }
     updateConnectionStatus(false);
     log('🔄 Bluetooth сброшен. Попробуйте подключиться заново.');
+}
+
+// --- Функция забывания устройства ---
+async function forgetDevice() {
+    if (device) {
+        try {
+            log('🔄 Принудительное забывание устройства...');
+            if (device.gatt.connected) {
+                await device.gatt.disconnect();
+            }
+            // Забываем устройство (работает не во всех браузерах)
+            if (device.forget) {
+                await device.forget();
+                log('✅ Устройство забыто');
+            }
+        } catch (e) {
+            log('⚠️ Не удалось забыть устройство: ' + e.message);
+        }
+        device = null;
+        server = null;
+    }
 }
 
 // --- Функция логирования ---
@@ -226,9 +254,11 @@ function updateConnectionStatus(connected) {
         statusText.style.color = '#000000';
         log('✅ Подключено к устройству');
         
-        // Скрываем кнопку
+        // Скрываем кнопку подключения, показываем кнопку сброса
         const connectBtn = document.getElementById('connectBtn');
+        const resetBtn = document.getElementById('resetBtn');
         if (connectBtn) connectBtn.style.display = 'none';
+        if (resetBtn) resetBtn.style.display = 'block';
     } else {
         statusLed.style.background = '#f44336';
         statusLed.style.animation = 'none';
@@ -236,9 +266,11 @@ function updateConnectionStatus(connected) {
         statusText.style.color = '#000000';
         log('❌ Отключено');
         
-        // Показываем кнопку
+        // Показываем обе кнопки
         const connectBtn = document.getElementById('connectBtn');
+        const resetBtn = document.getElementById('resetBtn');
         if (connectBtn) connectBtn.style.display = 'block';
+        if (resetBtn) resetBtn.style.display = 'block';
         
         // Очищаем значения при реальном отключении
         if (tempValue) tempValue.textContent = '--';
@@ -289,7 +321,7 @@ function handleSysInfoUpdate(event) {
 
 // --- Функция чтения всех характеристик ---
 async function readAllCharacteristics() {
-    if (!device || !device.gatt.connected) return;
+    if (!device || !device.gatt.connected || !tempChar || !humChar || !sysInfoChar) return;
     
     try {
         const temp = await tempChar.readValue();
@@ -312,41 +344,12 @@ function onDisconnected() {
     server = null;
 }
 
-// Добавьте эту функцию перед connect()
-async function forgetDevice() {
-    if (device) {
-        try {
-            log('🔄 Принудительное забывание устройства...');
-            if (device.gatt.connected) {
-                await device.gatt.disconnect();
-            }
-            // Забываем устройство (работает не во всех браузерах)
-            if (device.forget) {
-                await device.forget();
-                log('✅ Устройство забыто');
-            }
-        } catch (e) {
-            log('⚠️ Не удалось забыть устройство: ' + e.message);
-        }
-        device = null;
-        server = null;
-    }
-}
-
-// Измените начало функции connect():
+// --- Основная функция подключения ---
 async function connect() {
     try {
         // Сначала забываем старое устройство
         await forgetDevice();
         
-        log('🔍 Поиск устройств...');
-        // ... остальной код
-    }
-}
-
-// --- Основная функция подключения ---
-async function connect() {
-    try {
         log('🔍 Поиск устройств...');
         if (statusText) statusText.textContent = 'Поиск...';
         
