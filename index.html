@@ -12,60 +12,56 @@
     }
     
     body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        font-family: 'Courier New', monospace;
+        background: #000;
+        color: #0f0;
+        padding: 20px;
         max-width: 500px;
         margin: 0 auto;
-        padding: 20px;
-        background: #f5f5f5;
     }
     
     .container {
-        background: white;
-        border-radius: 20px;
+        border: 2px solid #0f0;
         padding: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        border-radius: 10px;
+        background: #111;
     }
     
-    h1 {
-        color: #333;
-        text-align: center;
-        font-size: 24px;
-        margin-bottom: 20px;
+    /* Верхняя панель */
+    .header {
         display: flex;
+        justify-content: space-between;
         align-items: center;
-        justify-content: center;
-        gap: 10px;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #0f0;
+    }
+    
+    .logo {
+        font-size: 24px;
+    }
+    
+    .title {
+        font-size: 18px;
+        font-weight: bold;
     }
     
     .version {
-        font-size: 14px;
-        color: #666;
-        background: #f0f0f0;
-        padding: 4px 8px;
-        border-radius: 12px;
-    }
-    
-    /* Статус подключения */
-    .status {
-        background: #e3f2fd;
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
+        font-size: 12px;
+        opacity: 0.8;
     }
     
     .status-led {
         width: 12px;
         height: 12px;
         border-radius: 50%;
-        background: #f44336;
-        transition: all 0.3s ease;
+        background: #f00;
+        display: inline-block;
+        margin-right: 5px;
     }
     
-    .status-led-connected {
-        background: #4caf50;
+    .status-led.connected {
+        background: #0f0;
         animation: pulse 2s infinite;
     }
     
@@ -75,360 +71,331 @@
         100% { opacity: 1; }
     }
     
-    #statusText {
-        flex: 1;
-        font-weight: 500;
+    /* Основной экран (как на ESP32) */
+    .main-screen {
+        background: #000;
+        border: 1px solid #0f0;
+        padding: 15px;
+        margin-bottom: 20px;
+        font-family: 'Courier New', monospace;
+        position: relative;
+        min-height: 200px;
+    }
+    
+    /* Верхняя строка с сообщениями */
+    .top-message {
+        text-align: center;
+        font-size: 14px;
+        margin-bottom: 15px;
+        color: #ff0;
+        min-height: 32px;
+        border-bottom: 1px dashed #0f0;
+        padding-bottom: 5px;
+    }
+    
+    /* Индикаторы слева (H%, C', T+) */
+    .indicators {
+        position: absolute;
+        top: 45px;
+        left: 10px;
+        font-size: 14px;
+    }
+    
+    .indicator {
+        margin-bottom: 5px;
+    }
+    
+    .indicator.blink {
+        animation: blink 1s infinite;
+    }
+    
+    @keyframes blink {
+        0% { opacity: 1; }
+        50% { opacity: 0; }
+        100% { opacity: 1; }
+    }
+    
+    /* Большие цифры справа */
+    .big-digits {
+        position: absolute;
+        right: 10px;
+        top: 45px;
+        text-align: right;
+    }
+    
+    .humidity-big {
+        font-size: 48px;
+        font-weight: bold;
+        line-height: 1;
+    }
+    
+    .temperature-big {
+        font-size: 48px;
+        font-weight: bold;
+        line-height: 1;
+    }
+    
+    .fraction {
+        font-size: 16px;
+        vertical-align: super;
+    }
+    
+    /* Индикатор ввода пароля */
+    .password-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 20px);
+        gap: 5px;
+        justify-content: center;
+        margin: 20px 0;
+    }
+    
+    .password-cell {
+        width: 20px;
+        height: 20px;
+        border: 1px solid #0f0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
     }
     
     /* Кнопки управления */
     .button-group {
         display: flex;
         gap: 10px;
-        margin-bottom: 20px;
+        margin: 15px 0;
+        align-items: center;
     }
     
-    .btn {
+    .connect-btn {
         flex: 1;
+        background: #000;
+        color: #0f0;
+        border: 2px solid #0f0;
         padding: 12px;
-        border: none;
-        border-radius: 10px;
+        font-family: 'Courier New', monospace;
         font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    
-    .btn-primary {
-        background: #2196f3;
-        color: white;
-    }
-    
-    .btn-primary:hover {
-        background: #1976d2;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(33,150,243,0.3);
-    }
-    
-    .btn-primary.connected {
-        background: #f44336;
-    }
-    
-    .btn-primary.connected:hover {
-        background: #d32f2f;
-    }
-    
-    .btn-secondary {
-        background: #9e9e9e;
-        color: white;
-    }
-    
-    .btn-secondary:hover:not(:disabled) {
-        background: #757575;
-        transform: translateY(-2px);
-    }
-    
-    .btn-secondary:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-    
-    /* Карточки с показаниями */
-    .sensors-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
-        margin-bottom: 20px;
-    }
-    
-    .sensor-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-    }
-    
-    .sensor-card.temp {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-    }
-    
-    .sensor-card.hum {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-    }
-    
-    .sensor-card.eff {
-        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-    }
-    
-    .sensor-label {
-        font-size: 14px;
-        opacity: 0.9;
-        margin-bottom: 5px;
-    }
-    
-    .sensor-value {
-        font-size: 28px;
         font-weight: bold;
-    }
-    
-    .sensor-unit {
-        font-size: 14px;
-        opacity: 0.8;
-        margin-left: 2px;
-    }
-    
-    /* Секция настроек */
-    .settings-section {
-        background: #f8f9fa;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 20px;
-    }
-    
-    .settings-title {
-        font-size: 18px;
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 15px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    
-    .settings-grid {
-        display: grid;
-        gap: 10px;
-    }
-    
-    .setting-item {
-        background: white;
-        padding: 12px;
-        border-radius: 8px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    
-    .setting-label {
-        color: #666;
-        font-weight: 500;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    
-    .setting-value {
-        font-weight: 600;
-        color: #2196f3;
-    }
-    
-    .setting-badge {
-        background: #e3f2fd;
-        color: #1976d2;
-        padding: 4px 8px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 500;
-    }
-    
-    /* Кнопка K10 */
-    .k10-button {
-        background: linear-gradient(135deg, #ff6b6b 0%, #ee5253 100%);
-        color: white;
-        border: none;
-        padding: 15px;
-        border-radius: 10px;
-        font-size: 18px;
-        font-weight: 600;
         cursor: pointer;
-        width: 100%;
-        margin-bottom: 20px;
-        transition: all 0.3s ease;
+        border-radius: 5px;
+    }
+    
+    .connect-btn:hover {
+        background: #0f0;
+        color: #000;
+    }
+    
+    .connect-btn.connected {
+        background: #0f0;
+        color: #000;
+    }
+    
+    .reset-btn {
+        width: 50px;
+        height: 50px;
+        background: #000;
+        color: #0f0;
+        border: 2px solid #0f0;
+        font-size: 20px;
+        cursor: pointer;
+        border-radius: 5px;
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 10px;
     }
     
-    .k10-button:hover:not(:disabled) {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(238,82,83,0.4);
+    .reset-btn:hover {
+        background: #0f0;
+        color: #000;
     }
     
-    .k10-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-    
-    .k10-button.active {
-        background: linear-gradient(135deg, #51cf66 0%, #37b24d 100%);
-    }
-    
-    /* Панель отладки */
-    .debug-panel {
-        background: #1e1e1e;
-        color: #00ff00;
-        font-family: 'Courier New', monospace;
+    /* Режим работы */
+    .mode-indicator {
+        text-align: center;
+        font-size: 18px;
+        font-weight: bold;
+        margin: 15px 0;
         padding: 10px;
-        border-radius: 5px;
-        margin-top: 20px;
-        font-size: 12px;
-        max-height: 150px;
-        overflow-y: auto;
+        border: 1px solid #0f0;
+        background: #000;
     }
     
-    .debug-header {
-        color: white;
-        margin-bottom: 5px;
-        cursor: pointer;
+    .mode-humidify { color: #0ff; }
+    .mode-dehumidify { color: #ff0; }
+    .mode-off { color: #f00; }
+    
+    /* Блок настроек */
+    .settings-block {
+        border: 1px solid #0f0;
+        padding: 15px;
+        margin: 20px 0;
+    }
+    
+    .settings-title {
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 15px;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+    }
+    
+    .settings-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .setting-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        padding: 8px;
+        border-bottom: 1px dotted #0f0;
+        cursor: pointer;
+    }
+    
+    .setting-row:hover {
+        background: #0f0;
+        color: #000;
+    }
+    
+    .setting-name {
+        font-size: 14px;
+    }
+    
+    .setting-value {
+        font-size: 14px;
+        font-weight: bold;
+    }
+    
+    /* Лог */
+    .log-panel {
+        margin-top: 20px;
+        border-top: 1px solid #0f0;
+        padding-top: 10px;
+    }
+    
+    .log-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+        margin-bottom: 10px;
+    }
+    
+    .log-content {
+        font-size: 12px;
+        max-height: 150px;
+        overflow-y: auto;
+        padding: 10px;
+        background: #000;
+        border: 1px solid #0f0;
     }
     
     .log-entry {
+        margin: 2px 0;
         padding: 2px 0;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px dotted #0f0;
     }
     
-    .log-entry.error {
-        color: #ff6b6b;
-    }
+    .log-entry.error { color: #f00; }
+    .log-entry.success { color: #0f0; }
+    .log-entry.warning { color: #ff0; }
     
-    .log-entry.success {
-        color: #69db7e;
-    }
-    
-    /* Статус ресурсов */
+    /* Индикаторы ресурсов */
     .resource-status {
         display: inline-block;
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        margin-right: 6px;
+        margin-right: 5px;
     }
     
-    .status-ok { background: #4caf50; }
-    .status-warning { background: #ff9800; }
-    .status-error { background: #f44336; }
+    .status-ok { background: #0f0; }
+    .status-warning { background: #ff0; }
+    .status-empty { background: #f00; }
     
     /* Адаптивность */
     @media (max-width: 480px) {
-        .sensors-grid {
-            grid-template-columns: 1fr;
-        }
-        
-        .button-group {
-            flex-direction: column;
+        .humidity-big, .temperature-big {
+            font-size: 36px;
         }
     }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>
-            <span>🎸 Guitar Cabinet</span>
-            <span class="version">v1.9</span>
-        </h1>
+        <!-- Верхняя панель как на ESP32 -->
+        <div class="header">
+            <div class="logo">🎸</div>
+            <div class="title">GUITAR CABINET</div>
+            <div class="version">v1.9</div>
+            <div>
+                <span class="status-led" id="statusLed"></span>
+                <span id="statusText">OFF</span>
+            </div>
+        </div>
         
-        <!-- Статус подключения -->
-        <div class="status">
-            <div class="status-led" id="statusLed"></div>
-            <span id="statusText">Ожидание подключения...</span>
+        <!-- Основной экран (точная копия ESP32) -->
+        <div class="main-screen" id="mainScreen">
+            <!-- Верхнее сообщение -->
+            <div class="top-message" id="topMessage"></div>
+            
+            <!-- Индикаторы слева (H%, C', T+) -->
+            <div class="indicators">
+                <div class="indicator" id="humIndicator">H%</div>
+                <div class="indicator" id="ventIndicator">C'</div>
+                <div class="indicator" id="heaterIndicator">T+</div>
+            </div>
+            
+            <!-- Большие цифры справа -->
+            <div class="big-digits">
+                <div>
+                    <span class="humidity-big" id="humidityInt">--</span>
+                    <span class="fraction" id="humidityFrac"></span>
+                </div>
+                <div>
+                    <span class="temperature-big" id="tempInt">--</span>
+                    <span class="fraction" id="tempFrac"></span>
+                </div>
+            </div>
+            
+            <!-- Целевая влажность (вверху слева) -->
+            <div style="position: absolute; top: 10px; left: 10px; font-size: 12px;" id="targetDisplay">
+                Цель: 50%
+            </div>
+            
+            <!-- Сетка пароля (появляется при вводе) -->
+            <div class="password-grid" id="passwordGrid" style="display: none;"></div>
         </div>
         
         <!-- Кнопки управления -->
         <div class="button-group">
-            <button class="btn btn-primary" id="connectBtn">🔌 Подключиться</button>
-            <button class="btn btn-secondary" id="resetBtn" disabled>🔄 Сброс BLE</button>
+            <button class="connect-btn" id="connectBtn">ПОДКЛЮЧИТЬСЯ</button>
+            <button class="reset-btn" id="resetBtn" title="Сброс BLE">↻</button>
         </div>
         
-        <!-- Кнопка K10 (управление замком) -->
-        <button class="k10-button" id="k10Btn" disabled>
-            <span>🔒</span>
-            <span>Управление замком (K10)</span>
-        </button>
+        <!-- Индикатор режима -->
+        <div class="mode-indicator" id="modeIndicator">
+            РЕЖИМ: ОЖИДАНИЕ
+        </div>
         
-        <!-- Сетка датчиков -->
-        <div class="sensors-grid">
-            <div class="sensor-card temp">
-                <div class="sensor-label">🌡️ Температура</div>
-                <div>
-                    <span class="sensor-value" id="tempValue">--</span>
-                    <span class="sensor-unit">°C</span>
-                </div>
-            </div>
-            
-            <div class="sensor-card hum">
-                <div class="sensor-label">💧 Влажность</div>
-                <div>
-                    <span class="sensor-value" id="humValue">--</span>
-                    <span class="sensor-unit">%</span>
-                </div>
-            </div>
-            
-            <div class="sensor-card eff">
-                <div class="sensor-label">⚡ Эффективность</div>
-                <div>
-                    <span class="sensor-value" id="effValue">--</span>
-                    <span class="sensor-unit">%/мин</span>
-                </div>
-            </div>
-            
-            <div class="sensor-card" style="background: linear-gradient(135deg, #a8e6cf 0%, #d4edda 100%); color: #333;">
-                <div class="sensor-label">🎯 Цель</div>
-                <div>
-                    <span class="sensor-value" id="targetValue">50</span>
-                    <span class="sensor-unit">%</span>
-                </div>
+        <!-- Блок настроек -->
+        <div class="settings-block">
+            <div class="settings-title">⚙️ НАСТРОЙКИ</div>
+            <div class="settings-list" id="settingsList">
+                <!-- Заполняется из JS -->
             </div>
         </div>
         
-        <!-- Настройки (как на ESP32) -->
-        <div class="settings-section">
-            <div class="settings-title">
-                <span>⚙️ Настройки системы</span>
-                <span class="setting-badge" id="settingsStatus">загрузка...</span>
+        <!-- Панель лога -->
+        <div class="log-panel">
+            <div class="log-header" onclick="toggleLog()">
+                <span>📋 ЛОГ СОЕДИНЕНИЯ</span>
+                <span id="logToggle">▼</span>
             </div>
-            
-            <div class="settings-grid" id="settingsContainer">
-                <!-- Будут заполняться динамически -->
-            </div>
-        </div>
-        
-        <!-- Статус ресурсов -->
-        <div class="settings-section">
-            <div class="settings-title">
-                <span>💧 Ресурсы</span>
-            </div>
-            
-            <div class="settings-grid">
-                <div class="setting-item">
-                    <span class="setting-label">
-                        <span class="resource-status" id="waterStatus"></span>
-                        Вода
-                    </span>
-                    <span class="setting-value" id="waterText">ОК</span>
-                </div>
-                
-                <div class="setting-item">
-                    <span class="setting-label">
-                        <span class="resource-status" id="silicaStatus"></span>
-                        Силикагель
-                    </span>
-                    <span class="setting-value" id="silicaText">ОК</span>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Панель отладки -->
-        <div class="debug-panel">
-            <div class="debug-header" onclick="toggleDebug()">
-                <span>📋 Лог подключения</span>
-                <span id="debugToggle">▼</span>
-            </div>
-            <div id="debugLog" style="display: block;"></div>
+            <div class="log-content" id="logContent" style="display: block;"></div>
         </div>
     </div>
     
