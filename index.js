@@ -1,8 +1,8 @@
 // ==========================================================================
-// BLE Web Interface for Guitar Cabinet - ПОЛНАЯ ВЕРСИЯ
+// BLE Web Interface - Точная копия экрана ESP32
 // ==========================================================================
 
-// UUID сервиса и характеристик
+// UUID (как в ESP32)
 const BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const BLE_CHAR_TARGET_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a1";
 const BLE_CHAR_CURRENT_TEMP_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a2";
@@ -15,33 +15,36 @@ let bluetoothDevice = null;
 let gattServer = null;
 let service = null;
 let characteristics = {};
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 3;
 
 // Элементы DOM
 const statusLed = document.getElementById('statusLed');
 const statusText = document.getElementById('statusText');
 const connectBtn = document.getElementById('connectBtn');
 const resetBtn = document.getElementById('resetBtn');
-const k10Btn = document.getElementById('k10Btn');
-const tempValue = document.getElementById('tempValue');
-const humValue = document.getElementById('humValue');
-const effValue = document.getElementById('effValue');
-const targetValue = document.getElementById('targetValue');
-const settingsContainer = document.getElementById('settingsContainer');
-const settingsStatus = document.getElementById('settingsStatus');
-const waterStatus = document.getElementById('waterStatus');
-const waterText = document.getElementById('waterText');
-const silicaStatus = document.getElementById('silicaStatus');
-const silicaText = document.getElementById('silicaText');
-const debugLog = document.getElementById('debugLog');
+const topMessage = document.getElementById('topMessage');
+const humIndicator = document.getElementById('humIndicator');
+const ventIndicator = document.getElementById('ventIndicator');
+const heaterIndicator = document.getElementById('heaterIndicator');
+const humidityInt = document.getElementById('humidityInt');
+const humidityFrac = document.getElementById('humidityFrac');
+const tempInt = document.getElementById('tempInt');
+const tempFrac = document.getElementById('tempFrac');
+const targetDisplay = document.getElementById('targetDisplay');
+const modeIndicator = document.getElementById('modeIndicator');
+const settingsList = document.getElementById('settingsList');
+const logContent = document.getElementById('logContent');
+
+// Состояние
+let currentMode = 'OFF';
+let blinkState = false;
+let targetHumidity = 50;
 
 // ==========================================================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ==========================================================================
 
 function log(message, type = 'info') {
-    console.log(`📱 [BLE] ${message}`);
+    console.log(`📱 ${message}`);
     
     const entry = document.createElement('div');
     entry.className = `log-entry ${type}`;
@@ -53,49 +56,47 @@ function log(message, type = 'info') {
     });
     
     entry.textContent = `[${time}] ${message}`;
-    debugLog.appendChild(entry);
-    debugLog.scrollTop = debugLog.scrollHeight;
+    logContent.appendChild(entry);
+    logContent.scrollTop = logContent.scrollHeight;
 }
 
-function updateStatus(text, isConnected) {
-    statusText.textContent = text;
-    
-    if (isConnected) {
-        statusLed.classList.add('status-led-connected');
-        connectBtn.textContent = '❌ Отключиться';
+function updateConnectionStatus(connected) {
+    if (connected) {
+        statusLed.classList.add('connected');
+        statusText.textContent = 'ON';
+        connectBtn.textContent = 'ОТКЛЮЧИТЬСЯ';
         connectBtn.classList.add('connected');
-        resetBtn.disabled = false;
-        k10Btn.disabled = false;
-        settingsStatus.textContent = 'подключено';
-        settingsStatus.style.background = '#c8e6c9';
-        settingsStatus.style.color = '#2e7d32';
     } else {
-        statusLed.classList.remove('status-led-connected');
-        connectBtn.textContent = '🔌 Подключиться';
+        statusLed.classList.remove('connected');
+        statusText.textContent = 'OFF';
+        connectBtn.textContent = 'ПОДКЛЮЧИТЬСЯ';
         connectBtn.classList.remove('connected');
-        resetBtn.disabled = true;
-        k10Btn.disabled = true;
-        settingsStatus.textContent = 'нет связи';
-        settingsStatus.style.background = '#ffcdd2';
-        settingsStatus.style.color = '#c62828';
     }
 }
 
-function toggleDebug() {
-    const log = document.getElementById('debugLog');
-    const toggle = document.getElementById('debugToggle');
+// Мигание индикаторов (как на ESP32)
+setInterval(() => {
+    blinkState = !blinkState;
     
-    if (log.style.display === 'none') {
-        log.style.display = 'block';
-        toggle.textContent = '▼';
+    // Мигание H% при работе
+    if (currentMode === 'HUMIDIFY') {
+        humIndicator.style.opacity = blinkState ? '1' : '0.3';
+    } else if (currentMode === 'DEHUMIDIFY') {
+        humIndicator.style.opacity = blinkState ? '1' : '0.3';
     } else {
-        log.style.display = 'none';
-        toggle.textContent = '▶';
+        humIndicator.style.opacity = '1';
     }
-}
+    
+    // Мигание C' при работе вентиляции
+    // (будет обновляться из данных)
+    
+    // Мигание T+ при работе подогрева
+    // (будет обновляться из данных)
+    
+}, 500);
 
 // ==========================================================================
-// ПОДКЛЮЧЕНИЕ К BLE
+// BLE ПОДКЛЮЧЕНИЕ
 // ==========================================================================
 
 async function connectToDevice() {
@@ -105,11 +106,7 @@ async function connectToDevice() {
             return;
         }
         
-        updateStatus('🔍 Поиск устройств...', false);
-        connectBtn.disabled = true;
-        resetBtn.disabled = true;
-        
-        log('Поиск устройств GuitarCabinet...');
+        log('🔍 Поиск устройств GuitarCabinet...');
         
         bluetoothDevice = await navigator.bluetooth.requestDevice({
             filters: [
@@ -119,8 +116,6 @@ async function connectToDevice() {
         });
 
         log(`✅ Найдено: ${bluetoothDevice.name}`);
-        
-        updateStatus('🔌 Подключение...', false);
         
         bluetoothDevice.addEventListener('gattserverdisconnected', handleDisconnect);
         
@@ -133,22 +128,15 @@ async function connectToDevice() {
         await discoverCharacteristics();
         await subscribeToNotifications();
         
-        updateStatus('✅ Подключено', true);
-        connectBtn.disabled = false;
-        reconnectAttempts = 0;
+        updateConnectionStatus(true);
         
+        // Читаем начальные данные
         await readAllSettings();
+        await readCurrentData();
         
     } catch (error) {
         log(`❌ Ошибка: ${error.message}`, 'error');
-        updateStatus('❌ Ошибка подключения', false);
-        connectBtn.disabled = false;
-        
-        reconnectAttempts++;
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            log(`🔄 Попытка переподключения ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
-            setTimeout(connectToDevice, 2000);
-        }
+        updateConnectionStatus(false);
     }
 }
 
@@ -160,19 +148,13 @@ async function disconnectFromDevice() {
 
 function handleDisconnect() {
     log('❌ Устройство отключено', 'error');
-    updateStatus('❌ Отключено', false);
-    connectBtn.disabled = false;
+    updateConnectionStatus(false);
     characteristics = {};
     gattServer = null;
-    
-    // Очищаем отображение
-    tempValue.textContent = '--';
-    humValue.textContent = '--';
-    effValue.textContent = '--';
 }
 
 async function resetBLE() {
-    log('🔄 Принудительный сброс BLE...');
+    log('🔄 Сброс BLE...');
     
     if (gattServer && gattServer.connected) {
         await disconnectFromDevice();
@@ -184,7 +166,7 @@ async function resetBLE() {
 }
 
 async function discoverCharacteristics() {
-    log('Поиск характеристик...');
+    log('🔍 Поиск характеристик...');
     
     const charList = [
         { name: 'targetHum', uuid: BLE_CHAR_TARGET_HUM_UUID },
@@ -205,7 +187,7 @@ async function discoverCharacteristics() {
 }
 
 async function subscribeToNotifications() {
-    log('Настройка уведомлений...');
+    log('📡 Настройка уведомлений...');
     
     const notifyChars = ['currentTemp', 'currentHum', 'sysInfo'];
     
@@ -233,18 +215,67 @@ function handleNotification(event) {
     const data = decoder.decode(value);
     
     if (data.startsWith('T:')) {
+        // Температура: "T:24.5"
         const temp = parseFloat(data.substring(2));
-        tempValue.textContent = temp.toFixed(1);
+        updateTemperature(temp);
     }
     else if (data.startsWith('H:')) {
+        // Влажность: "H:45.5"
         const hum = parseFloat(data.substring(2));
-        humValue.textContent = hum.toFixed(1);
+        updateHumidity(hum);
     }
     else if (data.startsWith('E:')) {
+        // Эффективность: "E:0.5"
         const eff = parseFloat(data.substring(2));
-        effValue.textContent = eff.toFixed(1);
+        // Можно использовать для чего-то
+    }
+    else if (data.startsWith('MSG:')) {
+        // Сообщение: "MSG:Дверь открыта"
+        topMessage.textContent = data.substring(4);
     }
 }
+
+function updateTemperature(temp) {
+    const intPart = Math.floor(temp);
+    const fracPart = Math.floor((temp - intPart) * 10);
+    
+    tempInt.textContent = intPart;
+    tempFrac.textContent = `.${fracPart}`;
+}
+
+function updateHumidity(hum) {
+    const intPart = Math.floor(hum);
+    const fracPart = Math.floor((hum - intPart) * 10);
+    
+    humidityInt.textContent = intPart;
+    humidityFrac.textContent = `.${fracPart}`;
+}
+
+async function readCurrentData() {
+    if (characteristics.currentTemp) {
+        try {
+            const value = await characteristics.currentTemp.readValue();
+            const data = new TextDecoder().decode(value);
+            if (data.startsWith('T:')) {
+                updateTemperature(parseFloat(data.substring(2)));
+            }
+        } catch (e) {}
+    }
+    
+    if (characteristics.currentHum) {
+        try {
+            const value = await characteristics.currentHum.readValue();
+            const data = new TextDecoder().decode(value);
+            if (data.startsWith('H:')) {
+                updateHumidity(parseFloat(data.substring(2)));
+            }
+        } catch (e) {}
+    }
+}
+
+// ==========================================================================
+// НАСТРОЙКИ
+// ==========================================================================
 
 async function readAllSettings() {
     if (!characteristics.allSettings) return;
@@ -255,7 +286,7 @@ async function readAllSettings() {
         const decoder = new TextDecoder('utf-8');
         const data = decoder.decode(value);
         
-        log(`📊 Настройки: ${data}`);
+        log(`📊 Настройки получены`);
         parseAndDisplaySettings(data);
         
     } catch (error) {
@@ -264,10 +295,7 @@ async function readAllSettings() {
 }
 
 function parseAndDisplaySettings(data) {
-    if (!data || data.length === 0) {
-        settingsContainer.innerHTML = '<div class="setting-item">Нет данных</div>';
-        return;
-    }
+    if (!data) return;
     
     const settings = {};
     const pairs = data.split(',');
@@ -279,136 +307,76 @@ function parseAndDisplaySettings(data) {
         }
     });
     
-    // Отображаем целевую влажность
+    // Обновляем целевую влажность
     if (settings.targetHumidity) {
-        targetValue.textContent = settings.targetHumidity;
+        targetHumidity = parseInt(settings.targetHumidity);
+        targetDisplay.textContent = `Цель: ${targetHumidity}%`;
     }
     
-    // Создаем HTML для настроек
+    // Список настроек для отображения (как в меню ESP32)
+    const menuItems = [
+        { key: 'targetHumidity', name: 'ВЛАЖНОСТЬ (H%)', value: settings.targetHumidity + '%' },
+        { key: 'lockTimeIndex', name: 'БЛОКИРОВКА', value: getLockTimeName(settings.lockTimeIndex) },
+        { key: 'menuTimeoutOptionIndex', name: 'ТАЙМАУТ МЕНЮ', value: getMenuTimeoutName(settings.menuTimeoutOptionIndex) },
+        { key: 'screenTimeoutOptionIndex', name: 'ТАЙМАУТ ЭКРАНА', value: getScreenTimeoutName(settings.screenTimeoutOptionIndex) },
+        { key: 'lockHoldTime', name: 'ЗАМОК УДЕРЖАНИЕ', value: settings.lockHoldTime + 'мс' },
+        { key: 'doorSoundEnabled', name: 'ЗВУК ДВЕРИ', value: settings.doorSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ' },
+        { key: 'waterHeaterEnabled', name: 'ПОДОГРЕВ ВОДЫ', value: settings.waterHeaterEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ' },
+        { key: 'deadZonePercent', name: 'МЕРТВАЯ ЗОНА', value: settings.deadZonePercent + '%' },
+        { key: 'hysteresis', name: 'ГИСТЕРЕЗИС', value: settings.hysteresis + '%' },
+        { key: 'maxSafeHumidity', name: 'МАКС. БЕЗОПАСНАЯ', value: settings.maxSafeHumidity + '%' }
+    ];
+    
     let html = '';
-    
-    // Основные настройки
-    const mainSettings = [
-        { key: 'targetHumidity', label: '🎯 Целевая влажность', unit: '%' },
-        { key: 'lockHoldTime', label: '🔒 Время удержания замка', unit: 'мс' },
-        { key: 'doorSoundEnabled', label: '🔊 Звук двери', unit: '', type: 'bool' },
-        { key: 'waterHeaterEnabled', label: '🔥 Подогрев воды', unit: '', type: 'bool' },
-        { key: 'waterHeaterMaxTemp', label: '🌡️ Макс. температура', unit: '°C' }
-    ];
-    
-    mainSettings.forEach(setting => {
-        if (settings[setting.key] !== undefined) {
-            let value = settings[setting.key];
-            if (setting.type === 'bool') {
-                value = value === '1' ? 'ВКЛ' : 'ВЫКЛ';
-            }
-            
+    menuItems.forEach(item => {
+        if (settings[item.key] !== undefined) {
             html += `
-                <div class="setting-item">
-                    <span class="setting-label">${setting.label}</span>
-                    <span class="setting-value">${value}${setting.unit}</span>
+                <div class="setting-row" onclick="selectSetting('${item.key}')">
+                    <span class="setting-name">${item.name}</span>
+                    <span class="setting-value">${item.value}</span>
                 </div>
             `;
         }
     });
     
-    // Логика влажности
-    const logicSettings = [
-        { key: 'deadZonePercent', label: '📊 Мертвая зона', unit: '%' },
-        { key: 'minHumidityChange', label: '📉 Мин. изменение', unit: '%' },
-        { key: 'maxOperationDuration', label: '⏱️ Макс. время работы', unit: ' мин' },
-        { key: 'operationCooldown', label: '⏳ Время отдыха', unit: ' мин' },
-        { key: 'maxSafeHumidity', label: '🛡️ Макс. безопасная', unit: '%' },
-        { key: 'resourceCheckDiff', label: '🔄 Порог ресурса', unit: '%' },
-        { key: 'hysteresis', label: '📈 Гистерезис', unit: '%' },
-        { key: 'lowFaultThreshold', label: '⚠️ Порог "Мало"', unit: '' },
-        { key: 'emptyFaultThreshold', label: '⛔ Порог "Нет"', unit: '' }
-    ];
-    
-    logicSettings.forEach(setting => {
-        if (settings[setting.key] !== undefined) {
-            html += `
-                <div class="setting-item">
-                    <span class="setting-label">${setting.label}</span>
-                    <span class="setting-value">${settings[setting.key]}${setting.unit}</span>
-                </div>
-            `;
-        }
-    });
-    
-    // Таймауты
-    const timeoutSettings = [
-        { key: 'lockTimeIndex', label: '🔐 Таймаут блокировки', unit: '', 
-          values: ['ОТКЛ', '30 сек', '1 мин', '2 мин', '5 мин'] },
-        { key: 'menuTimeoutOptionIndex', label: '📱 Таймаут меню', unit: '',
-          values: ['ОТКЛ', '15 сек', '30 сек', '1 мин', '2 мин'] },
-        { key: 'screenTimeoutOptionIndex', label: '🖥️ Таймаут экрана', unit: '',
-          values: ['ОТКЛ', '30 сек', '1 мин', '5 мин', '10 мин'] }
-    ];
-    
-    timeoutSettings.forEach(setting => {
-        if (settings[setting.key] !== undefined) {
-            const index = parseInt(settings[setting.key]);
-            const value = setting.values[index] || 'ОТКЛ';
-            html += `
-                <div class="setting-item">
-                    <span class="setting-label">${setting.label}</span>
-                    <span class="setting-value">${value}</span>
-                </div>
-            `;
-        }
-    });
-    
-    // Счетчики
-    const counterSettings = [
-        { key: 'rebootCounter', label: '🔄 Плановых перезагрузок', unit: '' },
-        { key: 'wdtResetCount', label: '⚠️ Аварийных перезагрузок', unit: '' }
-    ];
-    
-    counterSettings.forEach(setting => {
-        if (settings[setting.key] !== undefined) {
-            html += `
-                <div class="setting-item">
-                    <span class="setting-label">${setting.label}</span>
-                    <span class="setting-value">${settings[setting.key]}</span>
-                </div>
-            `;
-        }
-    });
-    
-    settingsContainer.innerHTML = html;
+    settingsList.innerHTML = html;
+}
+
+function getLockTimeName(index) {
+    const names = ['ОТКЛ', '30 сек', '1 мин', '2 мин', '5 мин'];
+    return names[parseInt(index)] || 'ОТКЛ';
+}
+
+function getMenuTimeoutName(index) {
+    const names = ['ОТКЛ', '15 сек', '30 сек', '1 мин', '2 мин'];
+    return names[parseInt(index)] || '15 сек';
+}
+
+function getScreenTimeoutName(index) {
+    const names = ['ОТКЛ', '30 сек', '1 мин', '5 мин', '10 мин'];
+    return names[parseInt(index)] || 'ОТКЛ';
+}
+
+// Функция для выбора настройки (будет отправлять команду на ESP32)
+window.selectSetting = function(settingKey) {
+    log(`🖱️ Выбрана настройка: ${settingKey}`);
+    // Здесь можно добавить отправку команды на ESP32
 }
 
 // ==========================================================================
-// УПРАВЛЕНИЕ K10 (ЗАМОК)
+// УПРАВЛЕНИЕ ЛОГОМ
 // ==========================================================================
 
-async function sendK10Command() {
-    if (!characteristics.targetHum) {
-        log('❌ Характеристика не найдена', 'error');
-        return;
-    }
+window.toggleLog = function() {
+    const log = document.getElementById('logContent');
+    const toggle = document.getElementById('logToggle');
     
-    try {
-        k10Btn.classList.add('active');
-        k10Btn.innerHTML = '<span>🔓</span><span>Открытие...</span>';
-        
-        // Отправляем специальную команду для K10
-        // Можно использовать характеристику targetHum с специальным значением
-        const encoder = new TextEncoder();
-        await characteristics.targetHum.writeValue(encoder.encode('K10'));
-        
-        log('🔓 Команда K10 отправлена', 'success');
-        
-        setTimeout(() => {
-            k10Btn.classList.remove('active');
-            k10Btn.innerHTML = '<span>🔒</span><span>Управление замком (K10)</span>';
-        }, 2000);
-        
-    } catch (error) {
-        log(`❌ Ошибка отправки K10: ${error.message}`, 'error');
-        k10Btn.classList.remove('active');
-        k10Btn.innerHTML = '<span>🔒</span><span>Управление замком (K10)</span>';
+    if (log.style.display === 'none') {
+        log.style.display = 'block';
+        toggle.textContent = '▼';
+    } else {
+        log.style.display = 'none';
+        toggle.textContent = '▶';
     }
 }
 
@@ -418,22 +386,19 @@ async function sendK10Command() {
 
 // Проверка поддержки Web Bluetooth
 if (!navigator.bluetooth) {
-    log('❌ Web Bluetooth не поддерживается в этом браузере!', 'error');
-    updateStatus('❌ Браузер не поддерживается', false);
+    log('❌ Web Bluetooth не поддерживается!', 'error');
     connectBtn.disabled = true;
 } else {
     log('✅ Web Bluetooth поддерживается');
+    log('🔄 Ожидание подключения...');
 }
 
 // Обработчики кнопок
 connectBtn.addEventListener('click', connectToDevice);
 resetBtn.addEventListener('click', resetBLE);
-k10Btn.addEventListener('click', sendK10Command);
 
-// Инициализация статуса ресурсов
-waterStatus.className = 'resource-status status-ok';
-waterText.textContent = 'ОК';
-silicaStatus.className = 'resource-status status-ok';
-silicaText.textContent = 'ОК';
-
-log('🚀 Интерфейс загружен');
+// Инициализация экрана
+updateConnectionStatus(false);
+humidityInt.textContent = '--';
+tempInt.textContent = '--';
+topMessage.textContent = 'ОЖИДАНИЕ ПОДКЛЮЧЕНИЯ...';
