@@ -12,7 +12,7 @@
     }
     
     body {
-        font-family: 'Segoe UI', 'Courier New', monospace;
+        font-family: 'Arial', 'Helvetica', sans-serif;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         min-height: 100vh;
         display: flex;
@@ -22,61 +22,52 @@
     }
     
     .container {
-        max-width: 500px;
+        max-width: 480px;
         width: 100%;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(10px);
+        background: white;
         border-radius: 30px;
-        padding: 25px;
+        padding: 20px;
         box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        border: 1px solid rgba(255,255,255,0.2);
     }
     
-    /* Верхняя панель */
-    .header {
+    /* Верхняя панель с логотипом и статусом */
+    .top-bar {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 20px;
-        padding-bottom: 15px;
-        border-bottom: 2px solid #f0f0f0;
+        margin-bottom: 15px;
     }
     
-    .logo-title {
+    .logo-area {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
     }
     
     .logo {
-        font-size: 32px;
-        filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));
+        font-size: 24px;
     }
     
     .title {
-        font-size: 20px;
-        font-weight: 700;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        letter-spacing: 1px;
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
     }
     
     .version {
-        font-size: 14px;
-        color: #666;
+        font-size: 12px;
+        color: #999;
         background: #f0f0f0;
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 12px;
     }
     
-    .status {
+    .status-area {
         display: flex;
         align-items: center;
         gap: 8px;
         background: #f0f0f0;
-        padding: 6px 12px;
+        padding: 5px 12px;
         border-radius: 20px;
     }
     
@@ -90,7 +81,6 @@
     
     .status-led.connected {
         background: #4caf50;
-        box-shadow: 0 0 10px #4caf50;
         animation: pulse 2s infinite;
     }
     
@@ -106,377 +96,228 @@
         color: #333;
     }
     
-    /* Основной экран */
-    .main-screen {
-        background: linear-gradient(145deg, #1a1a1a 0%, #2d2d2d 100%);
-        border-radius: 20px;
-        padding: 20px;
+    /* Экран как на ESP32 */
+    .esp-screen {
+        background: #1a1a1a;
+        border-radius: 16px;
+        padding: 15px;
         margin-bottom: 20px;
-        color: #fff;
+        color: #0f0;
+        font-family: 'Courier New', monospace;
         position: relative;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
-        border: 1px solid #444;
+        min-height: 180px;
+        border: 2px solid #333;
     }
     
-    /* Верхняя строка с сообщениями */
-    .top-bar {
+    /* Верхняя строка - цель и сообщение */
+    .top-line {
         display: flex;
         justify-content: space-between;
-        align-items: center;
         margin-bottom: 20px;
-        padding: 8px 12px;
-        background: rgba(0,0,0,0.3);
-        border-radius: 12px;
         font-size: 14px;
+        color: #0f0;
     }
     
-    .target-display {
-        color: #ffd700;
-        font-weight: 600;
-        background: rgba(255,215,0,0.1);
-        padding: 4px 10px;
-        border-radius: 20px;
+    .target {
+        color: #ff0;
     }
     
-    .message-display {
-        color: #87ceeb;
-        font-weight: 500;
+    .message {
+        color: #0ff;
     }
     
-    /* Индикаторы слева */
-    .indicators {
-        position: absolute;
-        left: 20px;
-        top: 80px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-    
-    .indicator {
-        background: rgba(255,255,255,0.1);
-        padding: 4px 8px;
-        border-radius: 12px;
-        font-size: 14px;
-        font-weight: 600;
-        min-width: 40px;
-        text-align: center;
-        backdrop-filter: blur(5px);
-        border: 1px solid rgba(255,255,255,0.1);
-    }
-    
-    .indicator.hum {
-        color: #87ceeb;
-        border-color: #87ceeb;
-    }
-    
-    .indicator.vent {
-        color: #98fb98;
-        border-color: #98fb98;
-    }
-    
-    .indicator.heater {
-        color: #ffb6c1;
-        border-color: #ffb6c1;
-    }
-    
-    .indicator.blink {
-        animation: blink 1s infinite;
-    }
-    
-    @keyframes blink {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.3; }
-    }
-    
-    /* Большие цифры - ВЛАЖНОСТЬ СЛЕВА, ТЕМПЕРАТУРА СПРАВА */
-    .big-digits {
+    /* Индикаторы на одном уровне */
+    .indicators-line {
         display: flex;
         justify-content: space-between;
-        margin: 10px 0 20px 0;
-        padding: 0 10px;
+        margin-bottom: 15px;
+        font-size: 14px;
+        color: #0f0;
+        opacity: 0.8;
     }
     
-    .humidity-block {
-        text-align: left;
-        flex: 1;
+    .indicator-left {
+        color: #0f0;
     }
     
-    .temperature-block {
-        text-align: right;
-        flex: 1;
+    .indicator-right {
+        color: #0f0;
     }
     
-    .block-label {
-        font-size: 12px;
-        color: #888;
-        margin-bottom: 5px;
-        letter-spacing: 1px;
-    }
-    
-    .value-block {
+    /* Большие цифры - влажность слева, температура справа */
+    .values-row {
         display: flex;
+        justify-content: space-between;
         align-items: baseline;
-        justify-content: flex-start;
     }
     
-    .temperature-block .value-block {
-        justify-content: flex-end;
-    }
-    
-    .big-number {
+    .humidity-value {
         font-size: 56px;
-        font-weight: 700;
+        font-weight: bold;
+        color: #0f0;
         line-height: 1;
-        background: linear-gradient(135deg, #fff 0%, #ccc 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-shadow: 0 2px 10px rgba(255,255,255,0.2);
+    }
+    
+    .temperature-value {
+        font-size: 56px;
+        font-weight: bold;
+        color: #0f0;
+        line-height: 1;
     }
     
     .fraction {
         font-size: 24px;
-        font-weight: 600;
-        color: #888;
-        margin-left: 2px;
+        vertical-align: super;
     }
     
-    .unit {
+    .unit-small {
         font-size: 16px;
-        color: #888;
-        margin-left: 4px;
+        margin-left: 2px;
+        color: #0f0;
+        opacity: 0.7;
     }
     
     /* Сетка пароля */
     .password-grid {
         display: grid;
-        grid-template-columns: repeat(3, 30px);
-        gap: 10px;
+        grid-template-columns: repeat(3, 25px);
+        gap: 5px;
         justify-content: center;
-        margin: 20px 0;
+        margin-top: 15px;
     }
     
     .password-cell {
-        width: 30px;
-        height: 30px;
-        border: 2px solid #4caf50;
-        border-radius: 8px;
+        width: 25px;
+        height: 25px;
+        border: 1px solid #0f0;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 18px;
-        color: #4caf50;
-        background: rgba(76,175,80,0.1);
+        font-size: 14px;
+        color: #0f0;
     }
     
-    /* Кнопки управления */
+    /* Кнопки */
     .button-group {
         display: flex;
         gap: 10px;
-        margin: 20px 0;
+        margin: 15px 0;
     }
     
     .connect-btn {
         flex: 1;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: #4caf50;
         color: white;
         border: none;
         padding: 15px;
-        border-radius: 15px;
+        border-radius: 12px;
         font-size: 16px;
         font-weight: 600;
         cursor: pointer;
         transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(102,126,234,0.4);
-    }
-    
-    .connect-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(102,126,234,0.6);
     }
     
     .connect-btn.connected {
-        background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
-        box-shadow: 0 4px 15px rgba(244,67,54,0.4);
+        background: #f44336;
     }
     
     .reset-btn {
-        width: 55px;
-        height: 55px;
-        background: white;
-        border: 2px solid #667eea;
-        border-radius: 15px;
+        width: 52px;
+        height: 52px;
+        background: #f0f0f0;
+        border: none;
+        border-radius: 12px;
         font-size: 24px;
         cursor: pointer;
         transition: all 0.3s ease;
-        color: #667eea;
-        display: flex;
-        align-items: center;
-        justify-content: center;
     }
     
     .reset-btn:hover {
-        background: #667eea;
-        color: white;
+        background: #ddd;
         transform: rotate(180deg);
     }
     
-    /* Индикатор режима */
-    .mode-indicator {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-        padding: 15px;
-        border-radius: 15px;
-        margin: 20px 0;
+    /* Режим работы */
+    .mode-display {
         text-align: center;
-        font-weight: 600;
         font-size: 16px;
-        border: 1px solid #dee2e6;
+        font-weight: 600;
+        padding: 12px;
+        background: #f0f0f0;
+        border-radius: 12px;
+        margin: 15px 0;
+        color: #333;
     }
     
-    .mode-humidify {
-        color: #4caf50;
-    }
-    
-    .mode-dehumidify {
-        color: #f44336;
-    }
-    
-    .mode-off {
-        color: #666;
-    }
-    
-    /* Блок настроек */
+    /* Настройки */
     .settings-block {
         background: #f8f9fa;
-        border-radius: 20px;
-        padding: 20px;
-        margin: 20px 0;
-        border: 1px solid #dee2e6;
-    }
-    
-    .settings-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 15px;
+        border-radius: 16px;
+        padding: 15px;
+        margin: 15px 0;
     }
     
     .settings-title {
-        font-size: 18px;
-        font-weight: 700;
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 12px;
         color: #333;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    
-    .settings-count {
-        background: #667eea;
-        color: white;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 12px;
     }
     
     .settings-list {
         display: flex;
         flex-direction: column;
         gap: 8px;
-        max-height: 300px;
+        max-height: 250px;
         overflow-y: auto;
-        padding-right: 5px;
-    }
-    
-    .settings-list::-webkit-scrollbar {
-        width: 4px;
-    }
-    
-    .settings-list::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 4px;
-    }
-    
-    .settings-list::-webkit-scrollbar-thumb {
-        background: #667eea;
-        border-radius: 4px;
     }
     
     .setting-row {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        padding: 12px 15px;
+        padding: 10px 12px;
         background: white;
-        border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        border: 1px solid #e9ecef;
-    }
-    
-    .setting-row:hover {
-        background: #667eea;
-        color: white;
-        transform: translateX(5px);
-        box-shadow: 0 4px 10px rgba(102,126,234,0.3);
-        border-color: #667eea;
-    }
-    
-    .setting-row:hover .setting-value {
-        color: white;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        font-size: 14px;
     }
     
     .setting-name {
-        font-size: 14px;
-        font-weight: 500;
-        color: #495057;
-    }
-    
-    .setting-row:hover .setting-name {
-        color: white;
+        color: #666;
     }
     
     .setting-value {
-        font-size: 14px;
         font-weight: 600;
-        color: #667eea;
-        background: rgba(102,126,234,0.1);
-        padding: 4px 10px;
-        border-radius: 20px;
-    }
-    
-    .setting-row:hover .setting-value {
-        background: rgba(255,255,255,0.2);
+        color: #4caf50;
     }
     
     /* Лог */
     .log-panel {
         background: #1a1a1a;
-        border-radius: 15px;
-        padding: 15px;
-        margin-top: 20px;
+        border-radius: 12px;
+        padding: 12px;
+        margin-top: 15px;
     }
     
     .log-header {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        color: #00ff00;
+        color: #0f0;
         font-family: 'Courier New', monospace;
         cursor: pointer;
-        padding: 5px 0;
+        font-size: 12px;
     }
     
     .log-content {
         font-family: 'Courier New', monospace;
-        font-size: 12px;
-        color: #00ff00;
-        max-height: 150px;
+        font-size: 11px;
+        color: #0f0;
+        max-height: 120px;
         overflow-y: auto;
-        margin-top: 10px;
-        padding: 10px;
+        margin-top: 8px;
+        padding: 8px;
         background: #000;
-        border-radius: 8px;
-        line-height: 1.6;
+        border-radius: 6px;
     }
     
     .log-entry {
@@ -484,86 +325,57 @@
         border-bottom: 1px solid #333;
     }
     
-    .log-entry.error { color: #ff6b6b; }
-    .log-entry.success { color: #69db7e; }
-    .log-entry.warning { color: #ffd43b; }
-    
-    /* Статус ресурсов */
-    .resource-status {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 5px;
-    }
-    
-    .status-ok { background: #4caf50; box-shadow: 0 0 5px #4caf50; }
-    .status-warning { background: #ff9800; box-shadow: 0 0 5px #ff9800; }
-    .status-empty { background: #f44336; box-shadow: 0 0 5px #f44336; }
-    
     /* Адаптивность */
-    @media (max-width: 480px) {
-        .big-number {
+    @media (max-width: 400px) {
+        .humidity-value, .temperature-value {
             font-size: 42px;
         }
         
         .fraction {
             font-size: 18px;
         }
-        
-        .indicators {
-            top: 100px;
-        }
     }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Верхняя панель -->
-        <div class="header">
-            <div class="logo-title">
+        <!-- Верхняя панель с логотипом и статусом -->
+        <div class="top-bar">
+            <div class="logo-area">
                 <span class="logo">🎸</span>
                 <span class="title">GUITAR CABINET</span>
+                <span class="version">v1.9</span>
             </div>
-            <div class="status">
+            <div class="status-area">
                 <span class="status-led" id="statusLed"></span>
                 <span class="status-text" id="statusText">OFF</span>
             </div>
         </div>
         
-        <!-- Основной экран -->
-        <div class="main-screen">
-            <!-- Верхняя строка с сообщениями -->
-            <div class="top-bar">
-                <span class="target-display" id="targetDisplay">Цель: 50%</span>
-                <span class="message-display" id="topMessage">ОЖИДАНИЕ ПОДКЛЮЧЕНИЯ...</span>
+        <!-- Экран ESP32 -->
+        <div class="esp-screen">
+            <!-- Верхняя строка: цель и сообщение -->
+            <div class="top-line">
+                <span class="target" id="targetDisplay">Цель: 50%</span>
+                <span class="message" id="topMessage">ОЖИДАНИЕ...</span>
             </div>
             
-            <!-- Индикаторы слева -->
-            <div class="indicators">
-                <div class="indicator hum" id="humIndicator">H%</div>
-                <div class="indicator vent" id="ventIndicator">C'</div>
-                <div class="indicator heater" id="heaterIndicator">T+</div>
+            <!-- Индикаторы на одной линии -->
+            <div class="indicators-line">
+                <span class="indicator-left" id="humIndicator">H%</span>
+                <span class="indicator-right" id="ventIndicator">C'</span>
             </div>
             
             <!-- Большие цифры: влажность слева, температура справа -->
-            <div class="big-digits">
-                <div class="humidity-block">
-                    <div class="block-label">ВЛАЖНОСТЬ</div>
-                    <div class="value-block">
-                        <span class="big-number" id="humidityInt">--</span>
-                        <span class="fraction" id="humidityFrac"></span>
-                        <span class="unit">%</span>
-                    </div>
+            <div class="values-row">
+                <div>
+                    <span class="humidity-value" id="humidityInt">--</span>
+                    <span class="fraction" id="humidityFrac"></span>
                 </div>
-                
-                <div class="temperature-block">
-                    <div class="block-label">ТЕМПЕРАТУРА</div>
-                    <div class="value-block">
-                        <span class="big-number" id="tempInt">--</span>
-                        <span class="fraction" id="tempFrac"></span>
-                        <span class="unit">°C</span>
-                    </div>
+                <div>
+                    <span class="temperature-value" id="tempInt">--</span>
+                    <span class="fraction" id="tempFrac"></span>
+                    <span class="unit-small">°C</span>
                 </div>
             </div>
             
@@ -571,31 +383,24 @@
             <div class="password-grid" id="passwordGrid" style="display: none;"></div>
         </div>
         
-        <!-- Кнопки управления -->
+        <!-- Кнопки -->
         <div class="button-group">
             <button class="connect-btn" id="connectBtn">ПОДКЛЮЧИТЬСЯ</button>
             <button class="reset-btn" id="resetBtn" title="Сброс BLE">↻</button>
         </div>
         
-        <!-- Индикатор режима -->
-        <div class="mode-indicator" id="modeIndicator">
-            РЕЖИМ: ОЖИДАНИЕ
-        </div>
+        <!-- Режим -->
+        <div class="mode-display" id="modeDisplay">РЕЖИМ: ОЖИДАНИЕ</div>
         
-        <!-- Блок настроек -->
+        <!-- Настройки -->
         <div class="settings-block">
-            <div class="settings-header">
-                <span class="settings-title">
-                    <span>⚙️</span> НАСТРОЙКИ
-                </span>
-                <span class="settings-count" id="settingsCount">0</span>
-            </div>
+            <div class="settings-title">⚙️ НАСТРОЙКИ</div>
             <div class="settings-list" id="settingsList">
                 <!-- Заполняется из JS -->
             </div>
         </div>
         
-        <!-- Панель лога -->
+        <!-- Лог -->
         <div class="log-panel">
             <div class="log-header" onclick="toggleLog()">
                 <span>📋 ЛОГ СОЕДИНЕНИЯ</span>
