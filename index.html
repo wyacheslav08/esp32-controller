@@ -23,6 +23,10 @@
         text-align: center;
         font-size: 24px;
         margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
     }
     .status {
         background: #e3f2fd;
@@ -39,29 +43,38 @@
         border-radius: 50%;
         background: #f44336;
         transition: background 0.3s;
+        box-shadow: 0 0 5px rgba(0,0,0,0.2);
     }
     .status-led-connected {
         background: #4caf50;
         animation: pulse 2s infinite;
     }
     @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.5; }
-        100% { opacity: 1; }
+        0% { opacity: 1; box-shadow: 0 0 5px #4caf50; }
+        50% { opacity: 0.7; box-shadow: 0 0 10px #4caf50; }
+        100% { opacity: 1; box-shadow: 0 0 5px #4caf50; }
     }
     #statusText {
         flex: 1;
+        font-weight: 500;
     }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎸 Guitar Cabinet Controller</h1>
+        <h1>
+            <span>🎸 Guitar Cabinet</span>
+            <span style="font-size: 14px; color: #666;">v1.0</span>
+        </h1>
+        
         <div class="status">
             <div class="status-led"></div>
             <span id="statusText">Ожидание подключения...</span>
         </div>
+        
+        <!-- Здесь будут динамически добавляться элементы -->
     </div>
+    
     <script src="index.js"></script>
 </body>
 </html>
