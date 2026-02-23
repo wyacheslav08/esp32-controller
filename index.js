@@ -1,471 +1,431 @@
-// index.js - ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ
+// =========================================================================
+// BLE Web Interface for Guitar Cabinet Controller
+// =========================================================================
 
-// --- UUID сервисов и характеристик (должны совпадать с ESP32) ---
-const BLE_SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
-const BLE_CHAR_TEMP_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a2';
-const BLE_CHAR_HUM_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a3';
-const BLE_CHAR_SYS_INFO_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a5';
+// UUID сервисов и характеристик (должны совпадать с ESP32)
+const BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const BLE_CHAR_TARGET_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a1";
+const BLE_CHAR_CURRENT_TEMP_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a2";
+const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
+const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
+const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 
-// --- Глобальные переменные ---
-let device = null;
-let server = null;
-let service = null;
-let tempChar = null;
-let humChar = null;
-let sysInfoChar = null;
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 3;
-let pollingInterval = null;
+// Глобальные переменные
+let bluetoothDevice = null;
+let gattServer = null;
+let targetHumCharacteristic = null;
+let currentTempCharacteristic = null;
+let currentHumCharacteristic = null;
+let allSettingsCharacteristic = null;
+let sysInfoCharacteristic = null;
 
-// --- DOM элементы ---
-let statusLed, statusText, tempValue, humValue, effValue, logDiv;
+// Элементы DOM
+const statusLed = document.querySelector('.status-led');
+const statusText = document.getElementById('statusText');
 
-// --- Функция создания интерфейса ---
-function createUI() {
-    const container = document.querySelector('.container');
-    if (!container) return;
-    
-    // Очищаем контейнер
-    container.innerHTML = '';
-    
-    // Заголовок
-    const title = document.createElement('h1');
-    title.textContent = '🎸 Guitar Cabinet Controller';
-    container.appendChild(title);
-    
-    // Статус
-    const statusDiv = document.createElement('div');
-    statusDiv.className = 'status';
-    statusDiv.style.cssText = `
-        background: #e3f2fd;
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    `;
-    
-    statusLed = document.createElement('div');
-    statusLed.className = 'status-led';
-    statusLed.style.cssText = `
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        background: #f44336;
-        transition: background 0.3s;
-    `;
-    
-    statusText = document.createElement('span');
-    statusText.id = 'statusText';
-    statusText.textContent = 'Ожидание подключения...';
-    statusText.style.flex = '1';
-    
-    statusDiv.appendChild(statusLed);
-    statusDiv.appendChild(statusText);
-    container.appendChild(statusDiv);
-    
-    // Панель датчиков
-    const sensorsDiv = document.createElement('div');
-    sensorsDiv.style.cssText = `
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 15px;
-        margin-bottom: 20px;
-    `;
-    
-    // Температура
-    const tempDiv = document.createElement('div');
-    tempDiv.style.cssText = `
-        background: #f8f9fa;
-        padding: 20px;
-        border-radius: 10px;
-        text-align: center;
-    `;
-    tempDiv.innerHTML = `
-        <div style="color: #666; font-size: 14px; margin-bottom: 5px;">Температура</div>
-        <div style="font-size: 32px; font-weight: bold; color: #2196f3;">
-            <span id="tempValue">--</span>°C
-        </div>
-    `;
-    
-    // Влажность
-    const humDiv = document.createElement('div');
-    humDiv.style.cssText = `
-        background: #f8f9fa;
-        padding: 20px;
-        border-radius: 10px;
-        text-align: center;
-    `;
-    humDiv.innerHTML = `
-        <div style="color: #666; font-size: 14px; margin-bottom: 5px;">Влажность</div>
-        <div style="font-size: 32px; font-weight: bold; color: #4caf50;">
-            <span id="humValue">--</span>%
-        </div>
-    `;
-    
-    // Эффективность
-    const effDiv = document.createElement('div');
-    effDiv.style.cssText = `
-        grid-column: span 2;
-        background: #fff3e0;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-    `;
-    effDiv.innerHTML = `
-        <div style="color: #666; font-size: 14px; margin-bottom: 5px;">Эффективность</div>
-        <div style="font-size: 24px; font-weight: bold; color: #ff9800;">
-            <span id="effValue">--</span>%/мин
-        </div>
-    `;
-    
-    sensorsDiv.appendChild(tempDiv);
-    sensorsDiv.appendChild(humDiv);
-    sensorsDiv.appendChild(effDiv);
-    container.appendChild(sensorsDiv);
-    
-    // Лог
-    logDiv = document.createElement('div');
-    logDiv.id = 'log';
-    logDiv.style.cssText = `
-        margin-top: 20px;
-        padding: 10px;
-        background: #f5f5f5;
-        border-radius: 5px;
-        font-family: monospace;
-        font-size: 12px;
-        max-height: 150px;
-        overflow-y: auto;
-        border: 1px solid #ddd;
-        margin-bottom: 20px;
-    `;
-    container.appendChild(logDiv);
-    
-    // Кнопка подключения
-    const connectBtn = document.createElement('button');
-    connectBtn.id = 'connectBtn';
-    connectBtn.textContent = '🔌 Подключиться к устройству';
-    connectBtn.style.cssText = `
-        background: #4caf50;
-        color: white;
-        border: none;
-        padding: 15px 30px;
-        border-radius: 10px;
-        font-size: 16px;
-        cursor: pointer;
-        width: 100%;
-        transition: background 0.3s;
-    `;
-    connectBtn.onmouseover = () => { connectBtn.style.background = '#45a049'; };
-    connectBtn.onmouseout = () => { connectBtn.style.background = '#4caf50'; };
-    connectBtn.onclick = connect;
-    container.appendChild(connectBtn);
-    
-    // Кнопка сброса Bluetooth
-    const resetBtn = document.createElement('button');
-    resetBtn.id = 'resetBtn';
-    resetBtn.textContent = '🔄 Сброс Bluetooth';
-    resetBtn.style.cssText = `
-        background: #ff9800;
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 5px;
-        font-size: 14px;
-        cursor: pointer;
-        width: 100%;
-        margin-top: 10px;
-        transition: background 0.3s;
-    `;
-    resetBtn.onmouseover = () => { resetBtn.style.background = '#f57c00'; };
-    resetBtn.onmouseout = () => { resetBtn.style.background = '#ff9800'; };
-    resetBtn.onclick = resetBluetooth;
-    container.appendChild(resetBtn);
-    
-    // Получаем ссылки на элементы
-    tempValue = document.getElementById('tempValue');
-    humValue = document.getElementById('humValue');
-    effValue = document.getElementById('effValue');
-}
+// =========================================================================
+// Функции подключения
+// =========================================================================
 
-// --- Функция сброса Bluetooth ---
-function resetBluetooth() {
-    if (device) {
-        try {
-            if (device.gatt.connected) {
-                device.gatt.disconnect();
-            }
-        } catch (e) {
-            log('⚠️ Ошибка при отключении: ' + e.message);
-        }
-        device = null;
-        server = null;
-    }
-    updateConnectionStatus(false);
-    log('🔄 Bluetooth сброшен. Попробуйте подключиться заново.');
-}
-
-// --- Функция забывания устройства ---
-async function forgetDevice() {
-    if (device) {
-        try {
-            log('🔄 Принудительное забывание устройства...');
-            if (device.gatt.connected) {
-                await device.gatt.disconnect();
-            }
-            // Забываем устройство (работает не во всех браузерах)
-            if (device.forget) {
-                await device.forget();
-                log('✅ Устройство забыто');
-            }
-        } catch (e) {
-            log('⚠️ Не удалось забыть устройство: ' + e.message);
-        }
-        device = null;
-        server = null;
-    }
-}
-
-// --- Функция логирования ---
-function log(message) {
-    const timestamp = new Date().toLocaleTimeString('ru-RU', { 
-        hour: '2-digit', 
-        minute: '2-digit', 
-        second: '2-digit' 
-    });
-    const logMessage = `${timestamp}: ${message}`;
-    console.log(logMessage);
-    
-    if (logDiv) {
-        logDiv.innerHTML += logMessage + '<br>';
-        logDiv.scrollTop = logDiv.scrollHeight;
-    }
-}
-
-// --- Обновление статуса подключения ---
-function updateConnectionStatus(connected) {
-    if (!statusLed || !statusText) return;
-    
-    if (connected) {
-        statusLed.style.background = '#4caf50';
-        statusLed.style.animation = 'pulse 2s infinite';
-        statusText.textContent = 'Подключено';
-        statusText.style.color = '#000000';
-        log('✅ Подключено к устройству');
-        
-        // Скрываем кнопку подключения, показываем кнопку сброса
-        const connectBtn = document.getElementById('connectBtn');
-        const resetBtn = document.getElementById('resetBtn');
-        if (connectBtn) connectBtn.style.display = 'none';
-        if (resetBtn) resetBtn.style.display = 'block';
-    } else {
-        statusLed.style.background = '#f44336';
-        statusLed.style.animation = 'none';
-        statusText.textContent = 'Отключено';
-        statusText.style.color = '#000000';
-        log('❌ Отключено');
-        
-        // Показываем обе кнопки
-        const connectBtn = document.getElementById('connectBtn');
-        const resetBtn = document.getElementById('resetBtn');
-        if (connectBtn) connectBtn.style.display = 'block';
-        if (resetBtn) resetBtn.style.display = 'block';
-        
-        // Очищаем значения при реальном отключении
-        if (tempValue) tempValue.textContent = '--';
-        if (humValue) humValue.textContent = '--';
-        if (effValue) effValue.textContent = '--';
-        
-        // Останавливаем опрос
-        if (pollingInterval) {
-            clearInterval(pollingInterval);
-            pollingInterval = null;
-        }
-    }
-}
-
-// --- Обработчики данных ---
-function handleTempUpdate(event) {
-    const value = new TextDecoder().decode(event.target.value);
-    const numStr = value.replace('T:', '');
-    const temp = parseFloat(numStr);
-    if (!isNaN(temp) && tempValue) {
-        tempValue.textContent = temp.toFixed(1);
-        log(`🌡️ Температура: ${temp.toFixed(1)}°C`);
-    }
-}
-
-function handleHumUpdate(event) {
-    const value = new TextDecoder().decode(event.target.value);
-    const numStr = value.replace('H:', '');
-    const hum = parseFloat(numStr);
-    if (!isNaN(hum) && humValue) {
-        humValue.textContent = hum.toFixed(1);
-        log(`💧 Влажность: ${hum.toFixed(1)}%`);
-    }
-}
-
-function handleSysInfoUpdate(event) {
-    const value = new TextDecoder().decode(event.target.value);
-    if (value.startsWith('E:') || value.startsWith('eff:')) {
-        const numStr = value.replace('E:', '').replace('eff:', '');
-        const eff = parseFloat(numStr);
-        if (!isNaN(eff) && effValue) {
-            effValue.textContent = eff.toFixed(1);
-            log(`📈 Эффективность: ${eff.toFixed(1)}%/мин`);
-        }
-    }
-    // Игнорируем пинги и другие сообщения
-}
-
-// --- Функция чтения всех характеристик ---
-async function readAllCharacteristics() {
-    if (!device || !device.gatt.connected || !tempChar || !humChar || !sysInfoChar) return;
-    
+/**
+ * Подключение к BLE устройству
+ */
+async function connectToDevice() {
     try {
-        const temp = await tempChar.readValue();
-        const hum = await humChar.readValue();
-        const sys = await sysInfoChar.readValue();
+        updateStatus('Поиск устройства...', 'connecting');
         
-        handleTempUpdate({ target: { value: temp } });
-        handleHumUpdate({ target: { value: hum } });
-        handleSysInfoUpdate({ target: { value: sys } });
-    } catch (e) {
-        // Игнорируем ошибки чтения - они могут возникать, если соединение прервалось
-    }
-}
-
-// --- Обработчик отключения ---
-function onDisconnected() {
-    log('❌ Устройство отключилось');
-    updateConnectionStatus(false);
-    device = null;
-    server = null;
-}
-
-// --- Основная функция подключения ---
-async function connect() {
-    try {
-        // Сначала забываем старое устройство
-        await forgetDevice();
-        
-        log('🔍 Поиск устройств...');
-        if (statusText) statusText.textContent = 'Поиск...';
-        
-        device = await navigator.bluetooth.requestDevice({
-            filters: [{ namePrefix: 'GuitarCabinet' }],
+        // Запрос устройства с нужным сервисом
+        bluetoothDevice = await navigator.bluetooth.requestDevice({
+            filters: [
+                { namePrefix: 'GuitarCabinet' },
+                { services: [BLE_SERVICE_UUID] }
+            ],
             optionalServices: [BLE_SERVICE_UUID]
         });
 
-        log('✅ Найдено: ' + device.name);
-        if (statusText) statusText.textContent = 'Найдено: ' + device.name;
-
-        device.addEventListener('gattserverdisconnected', onDisconnected);
-
-        log('🔌 Подключение...');
-        if (statusText) statusText.textContent = 'Подключение...';
-        server = await device.gatt.connect();
-
-        log('📡 Получение сервиса...');
-        service = await server.getPrimaryService(BLE_SERVICE_UUID);
-
-        log('📊 Получение характеристик...');
-        tempChar = await service.getCharacteristic(BLE_CHAR_TEMP_UUID);
-        humChar = await service.getCharacteristic(BLE_CHAR_HUM_UUID);
-        sysInfoChar = await service.getCharacteristic(BLE_CHAR_SYS_INFO_UUID);
-
-        // ========== ИСПРАВЛЕННАЯ ОБРАБОТКА ОШИБОК ==========
-        log('📨 Настройка уведомлений...');
+        updateStatus('Подключение...', 'connecting');
         
-        // Пытаемся включить уведомления для температуры
-        try {
-            await tempChar.startNotifications();
-            tempChar.addEventListener('characteristicvaluechanged', handleTempUpdate);
-            log('✅ Уведомления температуры включены');
-        } catch (e) {
-            log('⚠️ Уведомления температуры не поддерживаются, данные будем читать вручную');
-        }
+        // Подключение к серверу GATT
+        gattServer = await bluetoothDevice.gatt.connect();
         
-        // Пытаемся включить уведомления для влажности
-        try {
-            await humChar.startNotifications();
-            humChar.addEventListener('characteristicvaluechanged', handleHumUpdate);
-            log('✅ Уведомления влажности включены');
-        } catch (e) {
-            log('⚠️ Уведомления влажности не поддерживаются, данные будем читать вручную');
-        }
+        // Получение основного сервиса
+        const service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
         
-        // Пытаемся включить уведомления для системы
-        try {
-            await sysInfoChar.startNotifications();
-            sysInfoChar.addEventListener('characteristicvaluechanged', handleSysInfoUpdate);
-            log('✅ Уведомления системы включены');
-        } catch (e) {
-            log('⚠️ Уведомления системы не поддерживаются');
-        }
-
-        // Читаем начальные значения
-        log('📖 Чтение начальных значений...');
-        await readAllCharacteristics();
-
-        // Запускаем периодическое чтение (каждые 2 секунды) как запасной вариант
-        if (pollingInterval) clearInterval(pollingInterval);
-        pollingInterval = setInterval(readAllCharacteristics, 2000);
-        log('🔄 Запущен резервный опрос данных (каждые 2 сек)');
-
-        // Устанавливаем статус подключения
-        updateConnectionStatus(true);
-        reconnectAttempts = 0;
-
+        // Получение всех характеристик
+        targetHumCharacteristic = await service.getCharacteristic(BLE_CHAR_TARGET_HUM_UUID);
+        currentTempCharacteristic = await service.getCharacteristic(BLE_CHAR_CURRENT_TEMP_UUID);
+        currentHumCharacteristic = await service.getCharacteristic(BLE_CHAR_CURRENT_HUM_UUID);
+        allSettingsCharacteristic = await service.getCharacteristic(BLE_CHAR_ALL_SETTINGS_UUID);
+        sysInfoCharacteristic = await service.getCharacteristic(BLE_CHAR_SYS_INFO_UUID);
+        
+        // Подписка на уведомления
+        await currentTempCharacteristic.startNotifications();
+        await currentHumCharacteristic.startNotifications();
+        await sysInfoCharacteristic.startNotifications();
+        
+        // Обработка входящих уведомлений
+        currentTempCharacteristic.addEventListener('characteristicvaluechanged', 
+            handleTempNotification);
+        currentHumCharacteristic.addEventListener('characteristicvaluechanged', 
+            handleHumNotification);
+        sysInfoCharacteristic.addEventListener('characteristicvaluechanged', 
+            handleSysInfoNotification);
+        
+        // Обработка отключения
+        bluetoothDevice.addEventListener('gattserverdisconnected', handleDisconnect);
+        
+        updateStatus('✅ Подключено', 'connected');
+        
+        // Запрашиваем начальные данные
+        await requestInitialData();
+        
     } catch (error) {
-        log('❌ Ошибка подключения: ' + error.message);
-        if (statusText) statusText.textContent = 'Ошибка: ' + error.message;
-        
-        // Если устройство было подключено, но ошибка в настройке, не сбрасываем статус сразу
-        if (device && device.gatt.connected) {
-            log('⚠️ Устройство подключено, но есть проблемы с настройкой');
-            // Пытаемся хотя бы читать данные
-            try {
-                await readAllCharacteristics();
-                updateConnectionStatus(true);
-            } catch (e) {
-                updateConnectionStatus(false);
-            }
-        } else {
-            updateConnectionStatus(false);
-            
-            // Пробуем переподключиться
-            reconnectAttempts++;
-            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                log(`🔄 Попытка переподключения ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
-                setTimeout(connect, 2000);
-            }
-        }
+        console.error('Ошибка подключения:', error);
+        updateStatus('❌ Ошибка подключения', 'error');
     }
 }
 
-// --- Инициализация при загрузке ---
-window.addEventListener('load', () => {
-    // Создаем интерфейс
-    createUI();
+/**
+ * Обновление статуса подключения
+ */
+function updateStatus(text, state) {
+    statusText.textContent = text;
     
-    // Добавляем анимацию пульсации
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-    `;
-    document.head.appendChild(style);
+    // Обновляем классы для LED индикатора
+    statusLed.classList.remove('status-led-connected');
     
-    log('✅ Страница загружена. Нажмите кнопку для подключения.');
-});
-
-// --- Проверка поддержки Web Bluetooth ---
-if (!navigator.bluetooth) {
-    log('❌ Web Bluetooth не поддерживается в этом браузере');
-    if (statusText) statusText.textContent = 'Web Bluetooth не поддерживается';
+    if (state === 'connected') {
+        statusLed.classList.add('status-led-connected');
+    }
 }
+
+/**
+ * Обработка отключения устройства
+ */
+function handleDisconnect() {
+    updateStatus('❌ Устройство отключено', 'disconnected');
+    
+    // Сбрасываем переменные
+    gattServer = null;
+    targetHumCharacteristic = null;
+    currentTempCharacteristic = null;
+    currentHumCharacteristic = null;
+    allSettingsCharacteristic = null;
+    sysInfoCharacteristic = null;
+}
+
+// =========================================================================
+// Обработчики уведомлений
+// =========================================================================
+
+/**
+ * Обработка уведомлений температуры
+ */
+function handleTempNotification(event) {
+    const value = event.target.value;
+    const decoder = new TextDecoder('utf-8');
+    const data = decoder.decode(value);
+    
+    console.log('📊 Температура:', data);
+    
+    // Парсим формат "T:24.5"
+    if (data.startsWith('T:')) {
+        const temp = parseFloat(data.substring(2));
+        updateTempDisplay(temp);
+    }
+}
+
+/**
+ * Обработка уведомлений влажности
+ */
+function handleHumNotification(event) {
+    const value = event.target.value;
+    const decoder = new TextDecoder('utf-8');
+    const data = decoder.decode(value);
+    
+    console.log('📊 Влажность:', data);
+    
+    // Парсим формат "H:45.5"
+    if (data.startsWith('H:')) {
+        const hum = parseFloat(data.substring(2));
+        updateHumDisplay(hum);
+    }
+}
+
+/**
+ * Обработка системных уведомлений
+ */
+function handleSysInfoNotification(event) {
+    const value = event.target.value;
+    const decoder = new TextDecoder('utf-8');
+    const data = decoder.decode(value);
+    
+    console.log('ℹ️ Система:', data);
+    
+    // Парсим формат "E:0.5" (эффективность)
+    if (data.startsWith('E:')) {
+        const eff = parseFloat(data.substring(2));
+        updateEfficiencyDisplay(eff);
+    } else if (data === 'ping') {
+        console.log('📶 Pong');
+    }
+}
+
+// =========================================================================
+// Функции обновления интерфейса
+// =========================================================================
+
+/**
+ * Обновление отображения температуры
+ */
+function updateTempDisplay(temp) {
+    // Создаем или обновляем элемент температуры
+    let tempElement = document.getElementById('temp-display');
+    
+    if (!tempElement) {
+        tempElement = document.createElement('div');
+        tempElement.id = 'temp-display';
+        tempElement.className = 'sensor-card';
+        document.querySelector('.container').appendChild(tempElement);
+    }
+    
+    tempElement.innerHTML = `
+        <div class="sensor-label">🌡️ Температура</div>
+        <div class="sensor-value">${temp.toFixed(1)}°C</div>
+    `;
+}
+
+/**
+ * Обновление отображения влажности
+ */
+function updateHumDisplay(hum) {
+    let humElement = document.getElementById('hum-display');
+    
+    if (!humElement) {
+        humElement = document.createElement('div');
+        humElement.id = 'hum-display';
+        humElement.className = 'sensor-card';
+        document.querySelector('.container').appendChild(humElement);
+    }
+    
+    humElement.innerHTML = `
+        <div class="sensor-label">💧 Влажность</div>
+        <div class="sensor-value">${hum.toFixed(1)}%</div>
+    `;
+}
+
+/**
+ * Обновление отображения эффективности
+ */
+function updateEfficiencyDisplay(eff) {
+    let effElement = document.getElementById('eff-display');
+    
+    if (!effElement) {
+        effElement = document.createElement('div');
+        effElement.id = 'eff-display';
+        effElement.className = 'sensor-card';
+        document.querySelector('.container').appendChild(effElement);
+    }
+    
+    effElement.innerHTML = `
+        <div class="sensor-label">⚡ Эффективность</div>
+        <div class="sensor-value">${eff.toFixed(1)}%/мин</div>
+    `;
+}
+
+// =========================================================================
+// Функции записи данных
+// =========================================================================
+
+/**
+ * Установка целевой влажности
+ */
+async function setTargetHumidity(value) {
+    if (!targetHumCharacteristic) {
+        alert('Сначала подключитесь к устройству');
+        return;
+    }
+    
+    try {
+        const encoder = new TextEncoder();
+        await targetHumCharacteristic.writeValue(encoder.encode(value.toString()));
+        console.log('✅ Целевая влажность установлена:', value);
+    } catch (error) {
+        console.error('Ошибка записи:', error);
+    }
+}
+
+/**
+ * Запрос начальных данных
+ */
+async function requestInitialData() {
+    if (!allSettingsCharacteristic) return;
+    
+    try {
+        const value = await allSettingsCharacteristic.readValue();
+        const decoder = new TextDecoder('utf-8');
+        const data = decoder.decode(value);
+        
+        console.log('📥 Настройки:', data);
+        
+        // Парсим настройки
+        parseAndDisplaySettings(data);
+    } catch (error) {
+        console.error('Ошибка чтения настроек:', error);
+    }
+}
+
+/**
+ * Парсинг и отображение настроек
+ */
+function parseAndDisplaySettings(data) {
+    // Создаем секцию настроек, если её нет
+    let settingsElement = document.getElementById('settings-display');
+    
+    if (!settingsElement) {
+        settingsElement = document.createElement('div');
+        settingsElement.id = 'settings-display';
+        settingsElement.className = 'settings-card';
+        document.querySelector('.container').appendChild(settingsElement);
+    }
+    
+    // Парсим строку формата "key1=value1,key2=value2"
+    const settings = {};
+    const pairs = data.split(',');
+    
+    pairs.forEach(pair => {
+        const [key, value] = pair.split('=');
+        if (key && value) {
+            settings[key] = value;
+        }
+    });
+    
+    // Создаем HTML для настроек
+    let html = '<h2>⚙️ Настройки</h2>';
+    
+    if (settings.targetHumidity) {
+        html += `
+            <div class="setting-item">
+                <label>Целевая влажность:</label>
+                <input type="range" id="target-hum-slider" min="0" max="100" value="${settings.targetHumidity}">
+                <span id="target-hum-value">${settings.targetHumidity}%</span>
+            </div>
+        `;
+    }
+    
+    if (settings.lockHoldTime) {
+        html += `
+            <div class="setting-item">
+                <label>Время удержания замка:</label>
+                <span>${settings.lockHoldTime} мс</span>
+            </div>
+        `;
+    }
+    
+    if (settings.waterHeaterEnabled !== undefined) {
+        html += `
+            <div class="setting-item">
+                <label>Подогрев воды:</label>
+                <span>${settings.waterHeaterEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span>
+            </div>
+        `;
+    }
+    
+    settingsElement.innerHTML = html;
+    
+    // Добавляем обработчик для слайдера
+    const slider = document.getElementById('target-hum-slider');
+    if (slider) {
+        const valueSpan = document.getElementById('target-hum-value');
+        
+        slider.addEventListener('input', (e) => {
+            valueSpan.textContent = e.target.value + '%';
+        });
+        
+        slider.addEventListener('change', (e) => {
+            setTargetHumidity(e.target.value);
+        });
+    }
+}
+
+// =========================================================================
+// Добавление кнопки подключения в HTML
+// =========================================================================
+
+// Добавляем стили для новых элементов
+const styles = `
+    .sensor-card {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
+        text-align: center;
+    }
+    .sensor-label {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 5px;
+    }
+    .sensor-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #333;
+    }
+    .settings-card {
+        background: white;
+        border-radius: 10px;
+        padding: 15px;
+        margin-top: 20px;
+    }
+    .setting-item {
+        margin: 15px 0;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 8px;
+    }
+    .setting-item label {
+        display: block;
+        margin-bottom: 5px;
+        color: #555;
+    }
+    .setting-item input[type="range"] {
+        width: 100%;
+        margin: 5px 0;
+    }
+    .connect-btn {
+        background: #4caf50;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 25px;
+        font-size: 16px;
+        cursor: pointer;
+        width: 100%;
+        margin: 20px 0;
+        transition: background 0.3s;
+    }
+    .connect-btn:hover {
+        background: #45a049;
+    }
+    .connect-btn:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+    }
+`;
+
+// Добавляем стили в head
+const styleSheet = document.createElement('style');
+styleSheet.textContent = styles;
+document.head.appendChild(styleSheet);
+
+// Добавляем кнопку подключения
+const connectButton = document.createElement('button');
+connectButton.className = 'connect-btn';
+connectButton.textContent = '🔌 Подключиться к устройству';
+connectButton.onclick = connectToDevice;
+
+// Вставляем кнопку после статуса
+const container = document.querySelector('.container');
+container.insertBefore(connectButton, document.querySelector('.status').nextSibling);
+
+console.log('🚀 BLE Web Interface готов к работе');
