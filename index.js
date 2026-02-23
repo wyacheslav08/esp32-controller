@@ -1,5 +1,5 @@
 // ==========================================================================
-// BLE Web Interface - Точная копия экрана ESP32
+// BLE Web Interface - С возможностью изменения настроек
 // ==========================================================================
 
 // UUID (как в ESP32)
@@ -15,6 +15,7 @@ let bluetoothDevice = null;
 let gattServer = null;
 let service = null;
 let characteristics = {};
+let currentSettings = {}; // Храним текущие настройки
 
 // Элементы DOM
 const statusLed = document.getElementById('statusLed');
@@ -22,22 +23,20 @@ const statusText = document.getElementById('statusText');
 const connectBtn = document.getElementById('connectBtn');
 const resetBtn = document.getElementById('resetBtn');
 const topMessage = document.getElementById('topMessage');
+const targetDisplay = document.getElementById('targetDisplay');
 const humIndicator = document.getElementById('humIndicator');
 const ventIndicator = document.getElementById('ventIndicator');
-const heaterIndicator = document.getElementById('heaterIndicator');
 const humidityInt = document.getElementById('humidityInt');
 const humidityFrac = document.getElementById('humidityFrac');
 const tempInt = document.getElementById('tempInt');
 const tempFrac = document.getElementById('tempFrac');
-const targetDisplay = document.getElementById('targetDisplay');
-const modeIndicator = document.getElementById('modeIndicator');
+const modeDisplay = document.getElementById('modeDisplay');
 const settingsList = document.getElementById('settingsList');
 const logContent = document.getElementById('logContent');
 
 // Состояние
 let currentMode = 'OFF';
 let blinkState = false;
-let targetHumidity = 50;
 
 // ==========================================================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -74,11 +73,10 @@ function updateConnectionStatus(connected) {
     }
 }
 
-// Мигание индикаторов (как на ESP32)
+// Мигание индикаторов
 setInterval(() => {
     blinkState = !blinkState;
     
-    // Мигание H% при работе
     if (currentMode === 'HUMIDIFY') {
         humIndicator.style.opacity = blinkState ? '1' : '0.3';
     } else if (currentMode === 'DEHUMIDIFY') {
@@ -86,13 +84,6 @@ setInterval(() => {
     } else {
         humIndicator.style.opacity = '1';
     }
-    
-    // Мигание C' при работе вентиляции
-    // (будет обновляться из данных)
-    
-    // Мигание T+ при работе подогрева
-    // (будет обновляться из данных)
-    
 }, 500);
 
 // ==========================================================================
@@ -215,22 +206,17 @@ function handleNotification(event) {
     const data = decoder.decode(value);
     
     if (data.startsWith('T:')) {
-        // Температура: "T:24.5"
         const temp = parseFloat(data.substring(2));
         updateTemperature(temp);
     }
     else if (data.startsWith('H:')) {
-        // Влажность: "H:45.5"
         const hum = parseFloat(data.substring(2));
         updateHumidity(hum);
     }
     else if (data.startsWith('E:')) {
-        // Эффективность: "E:0.5"
-        const eff = parseFloat(data.substring(2));
-        // Можно использовать для чего-то
+        // Эффективность (можно использовать позже)
     }
     else if (data.startsWith('MSG:')) {
-        // Сообщение: "MSG:Дверь открыта"
         topMessage.textContent = data.substring(4);
     }
 }
@@ -274,7 +260,7 @@ async function readCurrentData() {
 }
 
 // ==========================================================================
-// НАСТРОЙКИ
+// РАБОТА С НАСТРОЙКАМИ
 // ==========================================================================
 
 async function readAllSettings() {
@@ -286,54 +272,74 @@ async function readAllSettings() {
         const decoder = new TextDecoder('utf-8');
         const data = decoder.decode(value);
         
+        // Парсим настройки
+        parseSettings(data);
+        displaySettingsList();
+        
         log(`📊 Настройки получены`);
-        parseAndDisplaySettings(data);
         
     } catch (error) {
         log(`❌ Ошибка чтения настроек: ${error.message}`, 'error');
     }
 }
 
-function parseAndDisplaySettings(data) {
+function parseSettings(data) {
     if (!data) return;
     
-    const settings = {};
     const pairs = data.split(',');
     
     pairs.forEach(pair => {
         const [key, value] = pair.split('=');
         if (key && value) {
-            settings[key] = value;
+            currentSettings[key] = value;
         }
     });
     
-    // Обновляем целевую влажность
-    if (settings.targetHumidity) {
-        targetHumidity = parseInt(settings.targetHumidity);
-        targetDisplay.textContent = `Цель: ${targetHumidity}%`;
+    // Обновляем отображение цели
+    if (currentSettings.targetHumidity) {
+        targetDisplay.textContent = `Цель: ${currentSettings.targetHumidity}%`;
     }
-    
-    // Список настроек для отображения (как в меню ESP32)
-    const menuItems = [
-        { key: 'targetHumidity', name: 'ВЛАЖНОСТЬ (H%)', value: settings.targetHumidity + '%' },
-        { key: 'lockTimeIndex', name: 'БЛОКИРОВКА', value: getLockTimeName(settings.lockTimeIndex) },
-        { key: 'menuTimeoutOptionIndex', name: 'ТАЙМАУТ МЕНЮ', value: getMenuTimeoutName(settings.menuTimeoutOptionIndex) },
-        { key: 'screenTimeoutOptionIndex', name: 'ТАЙМАУТ ЭКРАНА', value: getScreenTimeoutName(settings.screenTimeoutOptionIndex) },
-        { key: 'lockHoldTime', name: 'ЗАМОК УДЕРЖАНИЕ', value: settings.lockHoldTime + 'мс' },
-        { key: 'doorSoundEnabled', name: 'ЗВУК ДВЕРИ', value: settings.doorSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ' },
-        { key: 'waterHeaterEnabled', name: 'ПОДОГРЕВ ВОДЫ', value: settings.waterHeaterEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ' },
-        { key: 'deadZonePercent', name: 'МЕРТВАЯ ЗОНА', value: settings.deadZonePercent + '%' },
-        { key: 'hysteresis', name: 'ГИСТЕРЕЗИС', value: settings.hysteresis + '%' },
-        { key: 'maxSafeHumidity', name: 'МАКС. БЕЗОПАСНАЯ', value: settings.maxSafeHumidity + '%' }
-    ];
-    
+}
+
+// ==========================================================================
+// ОТОБРАЖЕНИЕ СПИСКА НАСТРОЕК
+// ==========================================================================
+
+const menuItems = [
+    { key: 'targetHumidity', name: 'ВЛАЖНОСТЬ (H%)', unit: '%', min: 0, max: 100, step: 1 },
+    { key: 'lockTimeIndex', name: 'БЛОКИРОВКА', type: 'options', 
+      options: ['ОТКЛ', '30 сек', '1 мин', '2 мин', '5 мин'] },
+    { key: 'menuTimeoutOptionIndex', name: 'ТАЙМАУТ МЕНЮ', type: 'options',
+      options: ['ОТКЛ', '15 сек', '30 сек', '1 мин', '2 мин'] },
+    { key: 'screenTimeoutOptionIndex', name: 'ТАЙМАУТ ЭКРАНА', type: 'options',
+      options: ['ОТКЛ', '30 сек', '1 мин', '5 мин', '10 мин'] },
+    { key: 'lockHoldTime', name: 'ЗАМОК УДЕРЖАНИЕ', unit: 'мс', min: 100, max: 5000, step: 100 },
+    { key: 'doorSoundEnabled', name: 'ЗВУК ДВЕРИ', type: 'boolean' },
+    { key: 'waterSilicaSoundEnabled', name: 'ЗВУК РЕСУРСОВ', type: 'boolean' },
+    { key: 'waterHeaterEnabled', name: 'ПОДОГРЕВ ВОДЫ', type: 'boolean' },
+    { key: 'waterHeaterMaxTemp', name: 'ТЕМП. ПОДОГРЕВА', unit: '°C', min: 20, max: 40, step: 1 },
+    { key: 'deadZonePercent', name: 'МЕРТВАЯ ЗОНА', unit: '%', min: 0, max: 10, step: 0.1 },
+    { key: 'minHumidityChange', name: 'МИН. ИЗМЕНЕНИЕ', unit: '%', min: 0, max: 5, step: 0.1 },
+    { key: 'maxOperationDuration', name: 'МАКС. ВРЕМЯ', unit: 'мин', min: 1, max: 10, step: 1 },
+    { key: 'operationCooldown', name: 'ВРЕМЯ ОТДЫХА', unit: 'мин', min: 1, max: 5, step: 1 },
+    { key: 'maxSafeHumidity', name: 'МАКС. БЕЗОПАСНАЯ', unit: '%', min: 50, max: 90, step: 1 },
+    { key: 'resourceCheckDiff', name: 'ПОРОГ РЕСУРСА', unit: '%', min: 1, max: 10, step: 1 },
+    { key: 'hysteresis', name: 'ГИСТЕРЕЗИС', unit: '%', min: 0, max: 5, step: 0.1 },
+    { key: 'lowFaultThreshold', name: 'ПОРОГ "МАЛО"', min: 1, max: 10, step: 1 },
+    { key: 'emptyFaultThreshold', name: 'ПОРОГ "НЕТ"', min: 1, max: 20, step: 1 }
+];
+
+function displaySettingsList() {
     let html = '';
+    
     menuItems.forEach(item => {
-        if (settings[item.key] !== undefined) {
+        if (currentSettings[item.key] !== undefined) {
+            const value = formatSettingValue(item, currentSettings[item.key]);
+            
             html += `
-                <div class="setting-row" onclick="selectSetting('${item.key}')">
+                <div class="setting-row" onclick="editSetting('${item.key}')">
                     <span class="setting-name">${item.name}</span>
-                    <span class="setting-value">${item.value}</span>
+                    <span class="setting-value">${value}</span>
                 </div>
             `;
         }
@@ -342,25 +348,127 @@ function parseAndDisplaySettings(data) {
     settingsList.innerHTML = html;
 }
 
-function getLockTimeName(index) {
-    const names = ['ОТКЛ', '30 сек', '1 мин', '2 мин', '5 мин'];
-    return names[parseInt(index)] || 'ОТКЛ';
+function formatSettingValue(item, value) {
+    if (item.type === 'options') {
+        const index = parseInt(value);
+        return item.options[index] || 'ОТКЛ';
+    }
+    
+    if (item.type === 'boolean') {
+        return value === '1' ? 'ВКЛ' : 'ВЫКЛ';
+    }
+    
+    if (item.unit) {
+        return value + item.unit;
+    }
+    
+    return value;
 }
 
-function getMenuTimeoutName(index) {
-    const names = ['ОТКЛ', '15 сек', '30 сек', '1 мин', '2 мин'];
-    return names[parseInt(index)] || '15 сек';
+// ==========================================================================
+// РЕДАКТИРОВАНИЕ НАСТРОЕК
+// ==========================================================================
+
+window.editSetting = function(key) {
+    const item = menuItems.find(i => i.key === key);
+    if (!item) return;
+    
+    const currentValue = currentSettings[key];
+    
+    let newValue;
+    
+    if (item.type === 'boolean') {
+        // Переключаем ВКЛ/ВЫКЛ
+        newValue = currentValue === '1' ? '0' : '1';
+        sendSetting(key, newValue);
+    }
+    else if (item.type === 'options') {
+        // Циклически переключаем опции
+        const maxIndex = item.options.length - 1;
+        let currentIndex = parseInt(currentValue) || 0;
+        newValue = ((currentIndex + 1) > maxIndex) ? 0 : (currentIndex + 1);
+        sendSetting(key, newValue.toString());
+    }
+    else {
+        // Для числовых значений показываем промпт
+        const promptText = `Введите значение для ${item.name} (${item.min} - ${item.max}):`;
+        const input = prompt(promptText, currentValue);
+        
+        if (input !== null) {
+            let numValue = parseFloat(input);
+            
+            // Проверяем диапазон
+            if (!isNaN(numValue)) {
+                if (numValue < item.min) numValue = item.min;
+                if (numValue > item.max) numValue = item.max;
+                
+                // Для дробных значений с шагом 0.1
+                if (item.step === 0.1) {
+                    numValue = Math.round(numValue * 10) / 10;
+                } else {
+                    numValue = Math.round(numValue);
+                }
+                
+                sendSetting(key, numValue.toString());
+            }
+        }
+    }
 }
 
-function getScreenTimeoutName(index) {
-    const names = ['ОТКЛ', '30 сек', '1 мин', '5 мин', '10 мин'];
-    return names[parseInt(index)] || 'ОТКЛ';
+async function sendSetting(key, value) {
+    if (!characteristics.allSettings) {
+        log('❌ Характеристика настроек не найдена', 'error');
+        return;
+    }
+    
+    try {
+        // Обновляем значение в текущих настройках
+        currentSettings[key] = value;
+        
+        // Формируем строку со всеми настройками
+        let settingsString = '';
+        for (const [k, v] of Object.entries(currentSettings)) {
+            if (settingsString) settingsString += ',';
+            settingsString += `${k}=${v}`;
+        }
+        
+        // Отправляем на ESP32
+        const encoder = new TextEncoder();
+        await characteristics.allSettings.writeValue(encoder.encode(settingsString));
+        
+        log(`✅ Настройка ${key} = ${value} отправлена`, 'success');
+        
+        // Обновляем отображение
+        displaySettingsList();
+        
+        // Если меняли целевую влажность, обновляем на экране
+        if (key === 'targetHumidity') {
+            targetDisplay.textContent = `Цель: ${value}%`;
+        }
+        
+    } catch (error) {
+        log(`❌ Ошибка отправки: ${error.message}`, 'error');
+    }
 }
 
-// Функция для выбора настройки (будет отправлять команду на ESP32)
-window.selectSetting = function(settingKey) {
-    log(`🖱️ Выбрана настройка: ${settingKey}`);
-    // Здесь можно добавить отправку команды на ESP32
+// ==========================================================================
+// ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ
+// ==========================================================================
+
+// Функция для отправки команд на ESP32 (например, для K10)
+async function sendCommand(command) {
+    if (!characteristics.targetHum) {
+        log('❌ Характеристика не найдена', 'error');
+        return;
+    }
+    
+    try {
+        const encoder = new TextEncoder();
+        await characteristics.targetHum.writeValue(encoder.encode(command));
+        log(`📤 Команда отправлена: ${command}`, 'success');
+    } catch (error) {
+        log(`❌ Ошибка отправки команды: ${error.message}`, 'error');
+    }
 }
 
 // ==========================================================================
@@ -401,4 +509,5 @@ resetBtn.addEventListener('click', resetBLE);
 updateConnectionStatus(false);
 humidityInt.textContent = '--';
 tempInt.textContent = '--';
-topMessage.textContent = 'ОЖИДАНИЕ ПОДКЛЮЧЕНИЯ...';
+topMessage.textContent = 'ОЖИДАНИЕ...';
+modeDisplay.textContent = 'РЕЖИМ: ОЖИДАНИЕ';
