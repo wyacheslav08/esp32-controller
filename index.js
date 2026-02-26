@@ -1,5 +1,5 @@
 // ==========================================================================
-// BLE Web Interface - С возможностью изменения настроек
+// BLE Web Interface - Guitar Cabinet Controller
 // ==========================================================================
 
 // UUID (как в ESP32)
@@ -15,7 +15,7 @@ let bluetoothDevice = null;
 let gattServer = null;
 let service = null;
 let characteristics = {};
-let currentSettings = {}; // Храним текущие настройки
+let currentSettings = {};
 
 // Элементы DOM
 const statusLed = document.getElementById('statusLed');
@@ -124,6 +124,7 @@ async function connectToDevice() {
         // Читаем начальные данные
         await readAllSettings();
         await readCurrentData();
+        await readSysInfo(); // Прочитаем sysInfo один раз
         
     } catch (error) {
         log(`❌ Ошибка: ${error.message}`, 'error');
@@ -177,10 +178,15 @@ async function discoverCharacteristics() {
     }
 }
 
+// ==========================================================================
+// ПОДПИСКА НА УВЕДОМЛЕНИЯ (ИСПРАВЛЕНО)
+// ==========================================================================
+
 async function subscribeToNotifications() {
     log('📡 Настройка уведомлений...');
     
-    const notifyChars = ['currentTemp', 'currentHum', 'sysInfo'];
+    // Только характеристики, которые поддерживают notify
+    const notifyChars = ['currentTemp', 'currentHum'];
     
     for (const name of notifyChars) {
         const char = characteristics[name];
@@ -194,6 +200,8 @@ async function subscribeToNotifications() {
             }
         }
     }
+    
+    log('  ℹ️ sysInfo только для чтения (без уведомлений)');
 }
 
 // ==========================================================================
@@ -213,9 +221,6 @@ function handleNotification(event) {
         const hum = parseFloat(data.substring(2));
         updateHumidity(hum);
     }
-    else if (data.startsWith('E:')) {
-        // Эффективность (можно использовать позже)
-    }
     else if (data.startsWith('MSG:')) {
         topMessage.textContent = data.substring(4);
     }
@@ -223,7 +228,7 @@ function handleNotification(event) {
 
 function updateTemperature(temp) {
     const intPart = Math.floor(temp);
-    const fracPart = Math.floor((temp - intPart) * 10);
+    const fracPart = Math.floor(Math.abs(temp - intPart) * 10);
     
     tempInt.textContent = intPart;
     tempFrac.textContent = `.${fracPart}`;
@@ -231,7 +236,7 @@ function updateTemperature(temp) {
 
 function updateHumidity(hum) {
     const intPart = Math.floor(hum);
-    const fracPart = Math.floor((hum - intPart) * 10);
+    const fracPart = Math.floor(Math.abs(hum - intPart) * 10);
     
     humidityInt.textContent = intPart;
     humidityFrac.textContent = `.${fracPart}`;
@@ -260,6 +265,41 @@ async function readCurrentData() {
 }
 
 // ==========================================================================
+// ЧТЕНИЕ SYS INFO (НОВАЯ ФУНКЦИЯ)
+// ==========================================================================
+
+async function readSysInfo() {
+    if (!characteristics.sysInfo) {
+        log('❌ sysInfo характеристика не найдена', 'error');
+        return;
+    }
+    
+    try {
+        const value = await characteristics.sysInfo.readValue();
+        const decoder = new TextDecoder('utf-8');
+        const data = decoder.decode(value);
+        
+        if (data.startsWith('E:')) {
+            const efficiency = parseFloat(data.substring(2));
+            log(`📊 Эффективность: ${efficiency.toFixed(1)}%/мин`);
+        } else {
+            log(`📊 sysInfo: ${data}`);
+        }
+        
+        return data;
+    } catch (error) {
+        log(`❌ Ошибка чтения sysInfo: ${error.message}`, 'error');
+    }
+}
+
+// Периодическое чтение sysInfo (раз в 30 секунд)
+setInterval(() => {
+    if (gattServer && gattServer.connected) {
+        readSysInfo();
+    }
+}, 30000);
+
+// ==========================================================================
 // РАБОТА С НАСТРОЙКАМИ
 // ==========================================================================
 
@@ -272,11 +312,10 @@ async function readAllSettings() {
         const decoder = new TextDecoder('utf-8');
         const data = decoder.decode(value);
         
-        // Парсим настройки
         parseSettings(data);
         displaySettingsList();
         
-        log(`📊 Настройки получены`);
+        log(`📊 Настройки получены (${Object.keys(currentSettings).length} параметров)`);
         
     } catch (error) {
         log(`❌ Ошибка чтения настроек: ${error.message}`, 'error');
@@ -287,11 +326,12 @@ function parseSettings(data) {
     if (!data) return;
     
     const pairs = data.split(',');
+    currentSettings = {}; // Сброс
     
     pairs.forEach(pair => {
         const [key, value] = pair.split('=');
         if (key && value) {
-            currentSettings[key] = value;
+            currentSettings[key.trim()] = value.trim();
         }
     });
     
@@ -359,6 +399,11 @@ function formatSettingValue(item, value) {
     }
     
     if (item.unit) {
+        // Для дробных чисел форматируем
+        const num = parseFloat(value);
+        if (item.step === 0.1) {
+            return num.toFixed(1) + item.unit;
+        }
         return value + item.unit;
     }
     
@@ -378,31 +423,31 @@ window.editSetting = function(key) {
     let newValue;
     
     if (item.type === 'boolean') {
-        // Переключаем ВКЛ/ВЫКЛ
         newValue = currentValue === '1' ? '0' : '1';
         sendSetting(key, newValue);
     }
     else if (item.type === 'options') {
-        // Циклически переключаем опции
         const maxIndex = item.options.length - 1;
         let currentIndex = parseInt(currentValue) || 0;
         newValue = ((currentIndex + 1) > maxIndex) ? 0 : (currentIndex + 1);
         sendSetting(key, newValue.toString());
     }
     else {
-        // Для числовых значений показываем промпт
-        const promptText = `Введите значение для ${item.name} (${item.min} - ${item.max}):`;
+        let promptText = `Введите значение для ${item.name}`;
+        if (item.min !== undefined && item.max !== undefined) {
+            promptText += ` (${item.min} - ${item.max})`;
+        }
+        promptText += ':';
+        
         const input = prompt(promptText, currentValue);
         
         if (input !== null) {
             let numValue = parseFloat(input);
             
-            // Проверяем диапазон
             if (!isNaN(numValue)) {
-                if (numValue < item.min) numValue = item.min;
-                if (numValue > item.max) numValue = item.max;
+                if (item.min !== undefined && numValue < item.min) numValue = item.min;
+                if (item.max !== undefined && numValue > item.max) numValue = item.max;
                 
-                // Для дробных значений с шагом 0.1
                 if (item.step === 0.1) {
                     numValue = Math.round(numValue * 10) / 10;
                 } else {
@@ -422,52 +467,27 @@ async function sendSetting(key, value) {
     }
     
     try {
-        // Обновляем значение в текущих настройках
         currentSettings[key] = value;
         
-        // Формируем строку со всеми настройками
         let settingsString = '';
         for (const [k, v] of Object.entries(currentSettings)) {
             if (settingsString) settingsString += ',';
             settingsString += `${k}=${v}`;
         }
         
-        // Отправляем на ESP32
         const encoder = new TextEncoder();
         await characteristics.allSettings.writeValue(encoder.encode(settingsString));
         
         log(`✅ Настройка ${key} = ${value} отправлена`, 'success');
         
-        // Обновляем отображение
         displaySettingsList();
         
-        // Если меняли целевую влажность, обновляем на экране
         if (key === 'targetHumidity') {
             targetDisplay.textContent = `Цель: ${value}%`;
         }
         
     } catch (error) {
         log(`❌ Ошибка отправки: ${error.message}`, 'error');
-    }
-}
-
-// ==========================================================================
-// ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ
-// ==========================================================================
-
-// Функция для отправки команд на ESP32 (например, для K10)
-async function sendCommand(command) {
-    if (!characteristics.targetHum) {
-        log('❌ Характеристика не найдена', 'error');
-        return;
-    }
-    
-    try {
-        const encoder = new TextEncoder();
-        await characteristics.targetHum.writeValue(encoder.encode(command));
-        log(`📤 Команда отправлена: ${command}`, 'success');
-    } catch (error) {
-        log(`❌ Ошибка отправки команды: ${error.message}`, 'error');
     }
 }
 
@@ -492,7 +512,6 @@ window.toggleLog = function() {
 // ИНИЦИАЛИЗАЦИЯ
 // ==========================================================================
 
-// Проверка поддержки Web Bluetooth
 if (!navigator.bluetooth) {
     log('❌ Web Bluetooth не поддерживается!', 'error');
     connectBtn.disabled = true;
@@ -501,11 +520,9 @@ if (!navigator.bluetooth) {
     log('🔄 Ожидание подключения...');
 }
 
-// Обработчики кнопок
 connectBtn.addEventListener('click', connectToDevice);
 resetBtn.addEventListener('click', resetBLE);
 
-// Инициализация экрана
 updateConnectionStatus(false);
 humidityInt.textContent = '--';
 tempInt.textContent = '--';
