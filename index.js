@@ -392,36 +392,44 @@ async function connectToDevice() {
 async function discoverCharacteristics() {
     log('Поиск характеристик...');
     
-    const charUUIDs = [
-        { name: 'targetHum', uuid: BLE_CHAR_TARGET_HUM_UUID },
-        { name: 'currentTemp', uuid: BLE_CHAR_CURRENT_TEMP_UUID }, // ДОЛЖНО БЫТЬ currentTemp
-        { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },   // ДОЛЖНО БЫТЬ currentHum
-        { name: 'allSettings', uuid: BLE_CHAR_ALL_SETTINGS_UUID },
-        { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID },
-        { name: 'k10', uuid: BLE_CHAR_K10_UUID }
-    ];
-    
-    // Пробуем получить каждую характеристику по отдельности
-    for (const char of charUUIDs) {
-        try {
-            log(`  - Поиск ${char.name} (${char.uuid})...`);
-            const characteristic = await service.getCharacteristic(char.uuid);
-            characteristics[char.name] = characteristic;
-            log(`    ✅ ${char.name} найден`);
-        } catch (e) {
-            log(`    ❌ ${char.name} не найден: ${e.message}`, 'error');
+    try {
+        const characteristics_list = await service.getCharacteristics();
+        log(`Найдено характеристик: ${characteristics_list.length}`);
+        
+        for (let i = 0; i < characteristics_list.length; i++) {
+            const char = characteristics_list[i];
+            const uuid = char.uuid.toLowerCase();
+            log(`  [${i}] UUID: ${uuid}`);
+            
+            // Сопоставляем по UUID
+            if (uuid.includes(BLE_CHAR_TARGET_HUM_UUID.toLowerCase())) {
+                characteristics.targetHum = char;
+                log('    ✅ targetHum');
+            } else if (uuid.includes(BLE_CHAR_CURRENT_TEMP_UUID.toLowerCase())) {
+                characteristics.currentTemp = char;
+                log('    ✅ currentTemp');
+            } else if (uuid.includes(BLE_CHAR_CURRENT_HUM_UUID.toLowerCase())) {
+                characteristics.currentHum = char;
+                log('    ✅ currentHum');
+            } else if (uuid.includes(BLE_CHAR_ALL_SETTINGS_UUID.toLowerCase())) {
+                characteristics.allSettings = char;
+                log('    ✅ allSettings');
+            } else if (uuid.includes(BLE_CHAR_SYS_INFO_UUID.toLowerCase())) {
+                characteristics.sysInfo = char;
+                log('    ✅ sysInfo');
+            } else if (uuid.includes(BLE_CHAR_K10_UUID.toLowerCase())) {
+                characteristics.k10 = char;
+                log('    ✅ K10 НАЙДЕН!');
+            }
         }
+    } catch (e) {
+        log(`❌ Ошибка: ${e.message}`, 'error');
     }
     
-    // Проверяем результаты
-    const found = Object.keys(characteristics).length;
-    log(`✅ Найдено характеристик: ${found} из ${charUUIDs.length}`);
-    
     if (characteristics.k10) {
-        log('✅ K10 характеристика успешно найдена!');
+        log('🎉 K10 успешно найден и готов к работе!');
     } else {
-        log('❌ K10 характеристика НЕ найдена!', 'error');
-        log('   Проверьте UUID в Arduino: ' + BLE_CHAR_K10_UUID, 'error');
+        log('❌ K10 не найден!', 'error');
     }
 }
 
