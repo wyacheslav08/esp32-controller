@@ -324,9 +324,11 @@ function updateStatus(text, state) {
 
 async function connectToDevice() {
     try {
+        // Если уже подключены, отключаемся
         if (bluetoothDevice && gattServer?.connected) {
             await disconnectFromDevice();
-            return;
+            // Даем время на отключение
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
         
         updateStatus('🔍 Поиск устройств...', 'connecting');
@@ -334,6 +336,11 @@ async function connectToDevice() {
         connectButton.textContent = '⏳ Поиск...';
         
         log('Запрос устройств с сервисом ' + BLE_SERVICE_UUID);
+        
+        // Очищаем предыдущее устройство если есть
+        if (bluetoothDevice) {
+            bluetoothDevice.removeEventListener('gattserverdisconnected', handleDisconnect);
+        }
         
         bluetoothDevice = await navigator.bluetooth.requestDevice({
             filters: [
@@ -373,6 +380,8 @@ async function connectToDevice() {
         // Запрашиваем статус K10
         if (characteristics.k10) {
             requestK10Status();
+        } else {
+            log('⚠️ K10 характеристика не найдена, проверьте Arduino код', 'warning');
         }
         
     } catch (error) {
@@ -380,13 +389,10 @@ async function connectToDevice() {
         updateStatus(`❌ Ошибка: ${error.message}`, 'error');
         connectButton.disabled = false;
         connectButton.textContent = '🔄 Повторить подключение';
-    }
-}
-
-async function disconnectFromDevice() {
-    if (gattServer && gattServer.connected) {
-        gattServer.disconnect();
-        log('🔌 Отключение...');
+        
+        // Очищаем при ошибке
+        bluetoothDevice = null;
+        gattServer = null;
     }
 }
 
@@ -470,6 +476,37 @@ function handleNotification(charName, value) {
     }
 }
 
+// Добавьте эту функцию для лучшего управления отключением
+async function disconnectFromDevice() {
+    if (gattServer && gattServer.connected) {
+        try {
+            // Остановить уведомления перед отключением
+            for (const charName of ['currentTemp', 'currentHum', 'sysInfo']) {
+                const char = characteristics[charName];
+                if (char) {
+                    try {
+                        await char.stopNotifications();
+                    } catch (e) {
+                        // Игнорируем ошибки при остановке
+                    }
+                }
+            }
+            
+            gattServer.disconnect();
+            log('🔌 Отключение...');
+        } catch (error) {
+            log(`❌ Ошибка при отключении: ${error.message}`, 'error');
+        }
+    }
+    
+    // Очищаем все ссылки
+    gattServer = null;
+    service = null;
+    characteristics = {};
+    bluetoothDevice = null;
+}
+
+// Обновите обработчик отключения
 function handleDisconnect(event) {
     log('❌ Устройство отключено', 'error');
     updateStatus('❌ Отключено', 'disconnected');
@@ -480,6 +517,7 @@ function handleDisconnect(event) {
         connectButton.disabled = false;
     }
     
+    // Очищаем интерфейс
     const k10Section = document.getElementById('k10-section');
     if (k10Section) k10Section.remove();
     
@@ -488,7 +526,31 @@ function handleDisconnect(event) {
         const el = document.getElementById(id);
         if (el) el.remove();
     });
+    
+    // Очищаем переменные
+    gattServer = null;
+    service = null;
+    characteristics = {};
 }
+
+// Добавьте функцию для проверки соединения
+function checkConnection() {
+    if (!bluetoothDevice || !gattServer) return false;
+    
+    try {
+        return gattServer.connected;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Добавьте периодическую проверку соединения
+setInterval(() => {
+    if (bluetoothDevice && gattServer && !checkConnection()) {
+        log('⚠️ Соединение потеряно, очищаем...', 'warning');
+        handleDisconnect();
+    }
+}, 5000);
 
 // =========================================================================
 // Функции отображения датчиков
@@ -611,22 +673,26 @@ function setupK10Button() {
     let isPressed = false;
     
     async function sendK10Command(command) {
-        if (!characteristics.k10) {
-            log('❌ Характеристика K10 не найдена', 'error');
-            return false;
-        }
-        
+    if (!characteristics.k10) {
+        log('❌ Характеристика K10 не найдена. Убедитесь что:', 'error');
+        log('   1. В Arduino добавлена характеристика с UUID: ' + BLE_CHAR_K10_UUID, 'error');
+        log('   2. Arduino перезагружен после добавления', 'error');
+        return false;
+    }
+    
         try {
             const encoder = new TextEncoder();
             await characteristics.k10.writeValue(encoder.encode(command));
             log(`📤 K10 команда: ${command}`, 'success');
-            
+        
             if (command === 'PRESS') {
-                k10Button.classList.add('pressed');
+                const k10Button = document.getElementById('k10-button');
+                if (k10Button) k10Button.classList.add('pressed');
             } else if (command === 'RELEASE') {
-                k10Button.classList.remove('pressed');
+                const k10Button = document.getElementById('k10-button');
+                if (k10Button) k10Button.classList.remove('pressed');
             }
-            
+        
             return true;
         } catch (error) {
             log(`❌ Ошибка отправки K10 команды: ${error.message}`, 'error');
