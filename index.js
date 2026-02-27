@@ -706,7 +706,7 @@ function setupK10Button() {
         sendK10Command('PRESS');
         document.getElementById('k10-button-text').textContent = 'Удерживайте...';
         
-        const holdTimeMs = 1000; // Время удержания
+        const holdTimeMs = 1000;
         
         pressTimer = setTimeout(async () => {
             if (isPressed) {
