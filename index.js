@@ -876,6 +876,94 @@ function parseAndDisplaySettings(data) {
             </div>
         `;
     }
+
+    // В функции parseAndDisplaySettings(), после блока с lockHoldTime:
+
+// Звуковые настройки
+html += '<div class="setting-item"><label>🔊 Звуковые оповещения:</label>';
+if (settings.doorSoundEnabled !== undefined) {
+    html += `<div>🚪 Дверь: <span class="${settings.doorSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.doorSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
+}
+if (settings.waterSilicaSoundEnabled !== undefined) {
+    html += `<div>💧 Ресурсы: <span class="${settings.waterSilicaSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterSilicaSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
+}
+html += '</div>';
+
+// Подогрев воды
+if (settings.waterHeaterEnabled !== undefined) {
+    html += `
+        <div class="setting-item">
+            <label>💧 Подогрев воды:</label>
+            <div>Статус: <span class="${settings.waterHeaterEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterHeaterEnabled === '1' ? 'ВКЛ 🔥' : 'ВЫКЛ ❄️'}</span></div>
+    `;
+    if (settings.waterHeaterMaxTemp) {
+        html += `<div>Макс. температура: ${settings.waterHeaterMaxTemp}°C</div>`;
+    }
+    html += '</div>';
+}
+
+// Таймауты
+html += '<div class="setting-item"><label>⏱️ Таймауты:</label>';
+
+const lockTimeNames = ["ОТКЛ", "30 сек", "1 мин", "2 мин", "5 мин"];
+if (settings.lockTimeIndex !== undefined) {
+    const index = parseInt(settings.lockTimeIndex);
+    html += `<div>🔐 Блокировка меню: ${lockTimeNames[index] || settings.lockTimeIndex}</div>`;
+}
+
+const menuTimeoutNames = ["ОТКЛ", "15 сек", "30 сек", "1 мин", "2 мин"];
+if (settings.menuTimeoutOptionIndex !== undefined) {
+    const index = parseInt(settings.menuTimeoutOptionIndex);
+    html += `<div>📱 Таймаут меню: ${menuTimeoutNames[index] || settings.menuTimeoutOptionIndex}</div>`;
+}
+
+const screenTimeoutNames = ["ОТКЛ", "30 сек", "1 мин", "5 мин", "10 мин"];
+if (settings.screenTimeoutOptionIndex !== undefined) {
+    const index = parseInt(settings.screenTimeoutOptionIndex);
+    html += `<div>🖥️ Таймаут экрана: ${screenTimeoutNames[index] || settings.screenTimeoutOptionIndex}</div>`;
+}
+html += '</div>';
+
+// Логика влажности
+html += '<div class="setting-item"><label>💧 Логика влажности:</label>';
+if (settings.deadZonePercent) {
+    html += `<div>📊 Мертвая зона: ${parseFloat(settings.deadZonePercent).toFixed(1)}%</div>`;
+}
+if (settings.minHumidityChange) {
+    html += `<div>📈 Мин. изменение: ${parseFloat(settings.minHumidityChange).toFixed(1)}%</div>`;
+}
+if (settings.maxOperationDuration) {
+    html += `<div>⏱️ Макс. время работы: ${settings.maxOperationDuration} мин</div>`;
+}
+if (settings.operationCooldown) {
+    html += `<div>😴 Время отдыха: ${settings.operationCooldown} мин</div>`;
+}
+if (settings.maxSafeHumidity) {
+    html += `<div>⚠️ Макс. безопасная влажность: ${settings.maxSafeHumidity}%</div>`;
+}
+if (settings.resourceCheckDiff) {
+    html += `<div>🔄 Порог проверки ресурсов: ${settings.resourceCheckDiff}%</div>`;
+}
+if (settings.hysteresis) {
+    html += `<div>📉 Гистерезис: ${parseFloat(settings.hysteresis).toFixed(1)}%</div>`;
+}
+if (settings.lowFaultThreshold) {
+    html += `<div>⚠️ Порог "мало": ${settings.lowFaultThreshold}</div>`;
+}
+if (settings.emptyFaultThreshold) {
+    html += `<div>⛔ Порог "пусто": ${settings.emptyFaultThreshold}</div>`;
+}
+html += '</div>';
+
+// Статистика
+html += '<div class="setting-item"><label>📊 Статистика:</label>';
+if (settings.wdtResetCount) {
+    html += `<div>🔄 Перезагрузок по WDT: ${settings.wdtResetCount}</div>`;
+}
+if (settings.rebootCounter) {
+    html += `<div>🔁 Плановых перезагрузок: ${settings.rebootCounter}</div>`;
+}
+html += '</div>';
     
     html += `
         <div style="display: flex; gap: 10px; margin-top: 20px;">
