@@ -394,8 +394,8 @@ async function discoverCharacteristics() {
     
     const charUUIDs = [
         { name: 'targetHum', uuid: BLE_CHAR_TARGET_HUM_UUID },
-        { name: 'currentTemp', uuid: BLE_CHAR_CURRENT_TEMP_UUID },
-        { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },
+        { name: 'currentTemp', uuid: BLE_CHAR_CURRENT_TEMP_UUID }, // ДОЛЖНО БЫТЬ currentTemp
+        { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },   // ДОЛЖНО БЫТЬ currentHum
         { name: 'allSettings', uuid: BLE_CHAR_ALL_SETTINGS_UUID },
         { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID },
         { name: 'k10', uuid: BLE_CHAR_K10_UUID }
