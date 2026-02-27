@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface for Guitar Cabinet Controller - ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ
+// BLE Web Interface for Guitar Cabinet Controller - ИСПРАВЛЕННАЯ ВЕРСИЯ
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -9,7 +9,7 @@ const BLE_CHAR_CURRENT_TEMP_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a2";
 const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
 const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
 const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
-const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6"; // ВАЖНО!
+const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
 
 // Глобальные переменные
 let bluetoothDevice = null;
@@ -326,7 +326,7 @@ async function connectToDevice() {
     try {
         if (bluetoothDevice && gattServer?.connected) {
             await disconnectFromDevice();
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Увеличим паузу
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
         updateStatus('🔍 Поиск устройств...', 'connecting');
@@ -335,25 +335,58 @@ async function connectToDevice() {
         
         log('Запрос устройств с сервисом ' + BLE_SERVICE_UUID);
         
-        // Таймаут для requestDevice
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд
-        
-        try {
-            bluetoothDevice = await navigator.bluetooth.requestDevice({
-                filters: [
-                    { namePrefix: 'GuitarCabinet' }
-                ],
-                optionalServices: [BLE_SERVICE_UUID]
-            }, { signal: controller.signal });
-            
-            clearTimeout(timeoutId);
-        } catch (error) {
-            clearTimeout(timeoutId);
-            throw error;
-        }
+        bluetoothDevice = await navigator.bluetooth.requestDevice({
+            filters: [
+                { namePrefix: 'GuitarCabinet' }
+            ],
+            optionalServices: [BLE_SERVICE_UUID]
+        });
 
-        // ... остальной код ...
+        log(`✅ Найдено устройство: ${bluetoothDevice.name}`);
+        
+        updateStatus('🔌 Подключение...', 'connecting');
+        connectButton.textContent = '⏳ Подключение...';
+        
+        bluetoothDevice.addEventListener('gattserverdisconnected', handleDisconnect);
+        
+        log('Подключение к GATT серверу...');
+        gattServer = await bluetoothDevice.gatt.connect();
+        log('✅ GATT сервер подключен');
+        
+        log('Поиск сервиса...');
+        service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
+        log('✅ Сервис найден');
+        
+        await discoverCharacteristics();
+        await subscribeToNotifications();
+        
+        updateStatus('✅ Подключено', 'connected');
+        connectButton.textContent = '❌ Отключиться';
+        connectButton.classList.add('connected');
+        connectButton.disabled = false;
+        
+        await requestInitialData();
+        createK10Section();
+        
+        if (characteristics.k10) {
+            requestK10Status();
+        } else {
+            log('⚠️ K10 характеристика не найдена', 'warning');
+        }
+        
+    } catch (error) {
+        log(`❌ Ошибка: ${error.message}`, 'error');
+        updateStatus(`❌ Ошибка: ${error.message}`, 'error');
+        connectButton.disabled = false;
+        connectButton.textContent = '🔄 Повторить подключение';
+        bluetoothDevice = null;
+        gattServer = null;
+    }
+}
+
+// =========================================================================
+// ИСПРАВЛЕННАЯ ФУНКЦИЯ discoverCharacteristics
+// =========================================================================
 
 async function discoverCharacteristics() {
     log('Поиск характеристик...');
@@ -367,22 +400,27 @@ async function discoverCharacteristics() {
         { name: 'k10', uuid: BLE_CHAR_K10_UUID }
     ];
     
-    // Пробуем получить по одной (это надежнее)
+    // Пробуем получить каждую характеристику по отдельности
     for (const char of charUUIDs) {
         try {
-            log(`  - Поиск ${char.name}...`);
-            characteristics[char.name] = await service.getCharacteristic(char.uuid);
+            log(`  - Поиск ${char.name} (${char.uuid})...`);
+            const characteristic = await service.getCharacteristic(char.uuid);
+            characteristics[char.name] = characteristic;
             log(`    ✅ ${char.name} найден`);
         } catch (e) {
             log(`    ❌ ${char.name} не найден: ${e.message}`, 'error');
         }
     }
     
-    // Проверяем K10
+    // Проверяем результаты
+    const found = Object.keys(characteristics).length;
+    log(`✅ Найдено характеристик: ${found} из ${charUUIDs.length}`);
+    
     if (characteristics.k10) {
         log('✅ K10 характеристика успешно найдена!');
     } else {
         log('❌ K10 характеристика НЕ найдена!', 'error');
+        log('   Проверьте UUID в Arduino: ' + BLE_CHAR_K10_UUID, 'error');
     }
 }
 
@@ -443,28 +481,21 @@ function handleNotification(charName, value) {
     }
 }
 
-// Добавьте эту функцию для лучшего управления отключением
 async function disconnectFromDevice() {
     if (gattServer && gattServer.connected) {
         try {
             log('🔌 Отключение...');
             
-            // Остановить уведомления
-            for (const charName of ['currentTemp', 'currentHum', 'sysInfo', 'k10']) {
+            for (const charName of ['currentTemp', 'currentHum', 'sysInfo']) {
                 const char = characteristics[charName];
                 if (char) {
                     try {
                         await char.stopNotifications();
-                    } catch (e) {
-                        // Игнорируем
-                    }
+                    } catch (e) {}
                 }
             }
             
-            // Отключаемся
             gattServer.disconnect();
-            
-            // Даем время на отключение
             await new Promise(resolve => setTimeout(resolve, 500));
             
         } catch (error) {
@@ -472,7 +503,6 @@ async function disconnectFromDevice() {
         }
     }
     
-    // Очищаем все ссылки
     gattServer = null;
     service = null;
     characteristics = {};
@@ -485,7 +515,6 @@ async function disconnectFromDevice() {
     log('🔌 Отключено');
 }
 
-// Обновите обработчик отключения
 function handleDisconnect(event) {
     log('❌ Устройство отключено', 'error');
     updateStatus('❌ Отключено', 'disconnected');
@@ -496,7 +525,6 @@ function handleDisconnect(event) {
         connectButton.disabled = false;
     }
     
-    // Очищаем интерфейс
     const k10Section = document.getElementById('k10-section');
     if (k10Section) k10Section.remove();
     
@@ -506,30 +534,10 @@ function handleDisconnect(event) {
         if (el) el.remove();
     });
     
-    // Очищаем переменные
     gattServer = null;
     service = null;
     characteristics = {};
 }
-
-// Добавьте функцию для проверки соединения
-function checkConnection() {
-    if (!bluetoothDevice || !gattServer) return false;
-    
-    try {
-        return gattServer.connected;
-    } catch (e) {
-        return false;
-    }
-}
-
-// Добавьте периодическую проверку соединения
-setInterval(() => {
-    if (bluetoothDevice && gattServer && !checkConnection()) {
-        log('⚠️ Соединение потеряно, очищаем...', 'warning');
-        handleDisconnect();
-    }
-}, 5000);
 
 // =========================================================================
 // Функции отображения датчиков
@@ -640,7 +648,6 @@ function createK10Section() {
     `;
     
     container.appendChild(k10Section);
-    
     setupK10Button();
 }
 
@@ -652,26 +659,22 @@ function setupK10Button() {
     let isPressed = false;
     
     async function sendK10Command(command) {
-    if (!characteristics.k10) {
-        log('❌ Характеристика K10 не найдена. Убедитесь что:', 'error');
-        log('   1. В Arduino добавлена характеристика с UUID: ' + BLE_CHAR_K10_UUID, 'error');
-        log('   2. Arduino перезагружен после добавления', 'error');
-        return false;
-    }
-    
+        if (!characteristics.k10) {
+            log('❌ Характеристика K10 не найдена', 'error');
+            return false;
+        }
+        
         try {
             const encoder = new TextEncoder();
             await characteristics.k10.writeValue(encoder.encode(command));
             log(`📤 K10 команда: ${command}`, 'success');
-        
+            
             if (command === 'PRESS') {
-                const k10Button = document.getElementById('k10-button');
-                if (k10Button) k10Button.classList.add('pressed');
+                k10Button.classList.add('pressed');
             } else if (command === 'RELEASE') {
-                const k10Button = document.getElementById('k10-button');
-                if (k10Button) k10Button.classList.remove('pressed');
+                k10Button.classList.remove('pressed');
             }
-        
+            
             return true;
         } catch (error) {
             log(`❌ Ошибка отправки K10 команды: ${error.message}`, 'error');
@@ -703,7 +706,7 @@ function setupK10Button() {
         sendK10Command('PRESS');
         document.getElementById('k10-button-text').textContent = 'Удерживайте...';
         
-        const holdTimeMs = parseInt(document.getElementById('hold-time')?.textContent) || 1000;
+        const holdTimeMs = 1000; // Время удержания
         
         pressTimer = setTimeout(async () => {
             if (isPressed) {
@@ -847,7 +850,6 @@ function parseAndDisplaySettings(data) {
     
     let html = '<h2>⚙️ Настройки</h2>';
     
-    // Основные настройки
     if (settings.targetHumidity) {
         html += `
             <div class="setting-item">
@@ -866,94 +868,6 @@ function parseAndDisplaySettings(data) {
         `;
     }
     
-    // Звуковые настройки
-    html += '<div class="setting-item"><label>🔊 Звуковые оповещения:</label>';
-    if (settings.doorSoundEnabled !== undefined) {
-        html += `<div>🚪 Дверь: <span class="${settings.doorSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.doorSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
-    }
-    if (settings.waterSilicaSoundEnabled !== undefined) {
-        html += `<div>💧 Ресурсы: <span class="${settings.waterSilicaSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterSilicaSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
-    }
-    html += '</div>';
-    
-    // Подогрев воды
-    if (settings.waterHeaterEnabled !== undefined) {
-        html += `
-            <div class="setting-item">
-                <label>💧 Подогрев воды:</label>
-                <div>Статус: <span class="${settings.waterHeaterEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterHeaterEnabled === '1' ? 'ВКЛ 🔥' : 'ВЫКЛ ❄️'}</span></div>
-        `;
-        if (settings.waterHeaterMaxTemp) {
-            html += `<div>Макс. температура: <span id="water-temp-value">${settings.waterHeaterMaxTemp}°C</span></div>`;
-            html += `<input type="range" id="water-temp-slider" min="20" max="40" value="${settings.waterHeaterMaxTemp}">`;
-        }
-        html += '</div>';
-    }
-    
-    // Таймауты
-    html += '<div class="setting-item"><label>⏱️ Таймауты:</label>';
-    
-    const lockTimeNames = ["ОТКЛ", "30 сек", "1 мин", "2 мин", "5 мин"];
-    if (settings.lockTimeIndex !== undefined) {
-        const index = parseInt(settings.lockTimeIndex);
-        html += `<div>🔐 Блокировка: ${lockTimeNames[index] || settings.lockTimeIndex}</div>`;
-    }
-    
-    const menuTimeoutNames = ["ОТКЛ", "15 сек", "30 сек", "1 мин", "2 мин"];
-    if (settings.menuTimeoutOptionIndex !== undefined) {
-        const index = parseInt(settings.menuTimeoutOptionIndex);
-        html += `<div>📱 Меню: ${menuTimeoutNames[index] || settings.menuTimeoutOptionIndex}</div>`;
-    }
-    
-    const screenTimeoutNames = ["ОТКЛ", "30 сек", "1 мин", "5 мин", "10 мин"];
-    if (settings.screenTimeoutOptionIndex !== undefined) {
-        const index = parseInt(settings.screenTimeoutOptionIndex);
-        html += `<div>🖥️ Экран: ${screenTimeoutNames[index] || settings.screenTimeoutOptionIndex}</div>`;
-    }
-    html += '</div>';
-    
-    // Логика влажности
-    html += '<div class="setting-item"><label>💧 Логика влажности:</label>';
-    if (settings.deadZonePercent) {
-        html += `<div>📊 Мертвая зона: ${parseFloat(settings.deadZonePercent).toFixed(1)}%</div>`;
-    }
-    if (settings.minHumidityChange) {
-        html += `<div>📈 Мин. изменение: ${parseFloat(settings.minHumidityChange).toFixed(1)}%</div>`;
-    }
-    if (settings.maxOperationDuration) {
-        html += `<div>⏱️ Макс. время: ${settings.maxOperationDuration} мин</div>`;
-    }
-    if (settings.operationCooldown) {
-        html += `<div>😴 Отдых: ${settings.operationCooldown} мин</div>`;
-    }
-    if (settings.maxSafeHumidity) {
-        html += `<div>⚠️ Макс. безопасная: ${settings.maxSafeHumidity}%</div>`;
-    }
-    if (settings.resourceCheckDiff) {
-        html += `<div>🔄 Порог ресурса: ${settings.resourceCheckDiff}%</div>`;
-    }
-    if (settings.hysteresis) {
-        html += `<div>📉 Гистерезис: ${parseFloat(settings.hysteresis).toFixed(1)}%</div>`;
-    }
-    if (settings.lowFaultThreshold) {
-        html += `<div>⚠️ Порог "Мало": ${settings.lowFaultThreshold}</div>`;
-    }
-    if (settings.emptyFaultThreshold) {
-        html += `<div>⛔ Порог "Нет": ${settings.emptyFaultThreshold}</div>`;
-    }
-    html += '</div>';
-    
-    // Счетчики
-    html += '<div class="setting-item"><label>📊 Статистика:</label>';
-    if (settings.rebootCounter) {
-        html += `<div>🔄 Перезагрузок: ${settings.rebootCounter}</div>`;
-    }
-    if (settings.wdtResetCount) {
-        html += `<div>🐕 WDT сбросов: ${settings.wdtResetCount}</div>`;
-    }
-    html += '</div>';
-    
-    // Кнопки управления
     html += `
         <div style="display: flex; gap: 10px; margin-top: 20px;">
             <button id="save-all-settings" class="connect-btn" style="background: #4caf50; flex: 2;">💾 Сохранить все настройки</button>
@@ -962,7 +876,6 @@ function parseAndDisplaySettings(data) {
     `;
     
     element.innerHTML = html;
-    
     setupSettingsHandlers(settings);
 }
 
@@ -992,14 +905,6 @@ function setupSettingsHandlers(initialSettings) {
             pendingSettings.lockHoldTime = e.target.value;
         });
     }
-    
-    const waterSlider = document.getElementById('water-temp-slider');
-    if (waterSlider) {
-        waterSlider.addEventListener('input', (e) => {
-            document.getElementById('water-temp-value').textContent = e.target.value + '°C';
-            pendingSettings.waterHeaterMaxTemp = e.target.value;
-        });
-    }
 }
 
 async function saveAllSettings() {
@@ -1026,9 +931,7 @@ async function saveAllSettings() {
         await characteristics.allSettings.writeValue(encoder.encode(settingsString));
         
         pendingSettings = {};
-        
         showNotification('✅ Настройки сохранены');
-        
         setTimeout(() => requestInitialData(), 500);
         
     } catch (error) {
@@ -1064,31 +967,4 @@ function showNotification(message, type = 'success') {
     setTimeout(() => {
         notification.style.opacity = '0';
     }, 3000);
-}
-
-function resetUI() {
-    // Очищаем интерфейс
-    const k10Section = document.getElementById('k10-section');
-    if (k10Section) k10Section.remove();
-    
-    const displays = ['temp-display', 'hum-display', 'eff-display', 'settings-display'];
-    displays.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.remove();
-    });
-    
-    // Сбрасываем состояние
-    gattServer = null;
-    service = null;
-    characteristics = {};
-    bluetoothDevice = null;
-    pendingSettings = {};
-    
-    updateStatus('❌ Отключено', 'disconnected');
-    
-    if (connectButton) {
-        connectButton.textContent = '🔌 Подключиться к устройству';
-        connectButton.classList.remove('connected');
-        connectButton.disabled = false;
-    }
 }
