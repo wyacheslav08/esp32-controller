@@ -1,8 +1,8 @@
-// ==========================================================================
-// BLE Web Interface - Guitar Cabinet Controller
-// ==========================================================================
+// =========================================================================
+// BLE Web Interface for Guitar Cabinet Controller - С КНОПКОЙ K10
+// =========================================================================
 
-// UUID (как в ESP32)
+// UUID сервисов и характеристик
 const BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const BLE_CHAR_TARGET_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a1";
 const BLE_CHAR_CURRENT_TEMP_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a2";
@@ -10,95 +10,317 @@ const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
 const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
 const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 
+// НОВЫЙ UUID для K10
+const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
+
 // Глобальные переменные
 let bluetoothDevice = null;
 let gattServer = null;
 let service = null;
 let characteristics = {};
-let currentSettings = {};
 
 // Элементы DOM
-const statusLed = document.getElementById('statusLed');
+const statusLed = document.querySelector('.status-led');
 const statusText = document.getElementById('statusText');
-const connectBtn = document.getElementById('connectBtn');
-const resetBtn = document.getElementById('resetBtn');
-const topMessage = document.getElementById('topMessage');
-const targetDisplay = document.getElementById('targetDisplay');
-const humIndicator = document.getElementById('humIndicator');
-const ventIndicator = document.getElementById('ventIndicator');
-const humidityInt = document.getElementById('humidityInt');
-const humidityFrac = document.getElementById('humidityFrac');
-const tempInt = document.getElementById('tempInt');
-const tempFrac = document.getElementById('tempFrac');
-const modeDisplay = document.getElementById('modeDisplay');
-const settingsList = document.getElementById('settingsList');
-const logContent = document.getElementById('logContent');
+let connectButton = null;
+let debugElement = null;
 
-// Состояние
-let currentMode = 'OFF';
-let blinkState = false;
+// =========================================================================
+// Инициализация интерфейса
+// =========================================================================
 
-// ==========================================================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ==========================================================================
+document.addEventListener('DOMContentLoaded', () => {
+    // Создаем кнопку подключения
+    connectButton = document.createElement('button');
+    connectButton.className = 'connect-btn';
+    connectButton.textContent = '🔌 Подключиться к устройству';
+    connectButton.onclick = connectToDevice;
+    
+    // Вставляем кнопку после статуса
+    const container = document.querySelector('.container');
+    container.insertBefore(connectButton, document.querySelector('.status').nextSibling);
+    
+    // Создаем область для отладки
+    debugElement = document.createElement('div');
+    debugElement.className = 'debug-panel';
+    debugElement.innerHTML = '<h3>📋 Лог подключения:</h3><div id="debug-log"></div>';
+    container.appendChild(debugElement);
+    
+    // Добавляем стили
+    addStyles();
+    
+    log('🚀 Интерфейс загружен');
+});
 
+/**
+ * Добавление стилей
+ */
+function addStyles() {
+    const styles = `
+        .sensor-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            text-align: center;
+            border: 1px solid #e0e0e0;
+        }
+        .sensor-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .sensor-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+        }
+        .settings-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+            border: 1px solid #e0e0e0;
+        }
+        .settings-card h2 {
+            margin: 0 0 15px 0;
+            font-size: 18px;
+            color: #333;
+        }
+        .setting-item {
+            margin: 15px 0;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+        .setting-item label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+        .setting-item input[type="range"] {
+            width: 100%;
+            margin: 5px 0;
+        }
+        .connect-btn {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin: 20px 0;
+            transition: background 0.3s;
+        }
+        .connect-btn:hover {
+            background: #1976d2;
+        }
+        .connect-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .connect-btn.connected {
+            background: #f44336;
+        }
+        .connect-btn.connected:hover {
+            background: #d32f2f;
+        }
+        .debug-panel {
+            background: #1e1e1e;
+            color: #00ff00;
+            font-family: monospace;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 12px;
+        }
+        .debug-panel h3 {
+            color: #fff;
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        #debug-log {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .log-entry {
+            margin: 2px 0;
+            border-bottom: 1px solid #333;
+            padding: 2px 0;
+        }
+        
+        /* Стили для кнопки K10 */
+        .k10-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #fff3e0;
+            border-radius: 10px;
+            border: 1px solid #ffe0b2;
+        }
+        
+        .k10-section h3 {
+            margin: 0 0 10px 0;
+            color: #f57c00;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 18px;
+        }
+        
+        .k10-button {
+            background: #ff9800;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .k10-button:hover:not(:disabled) {
+            background: #f57c00;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .k10-button:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 3px rgba(0,0,0,0.2);
+        }
+        
+        .k10-button.pressed {
+            background: #e65100;
+            transform: scale(0.98);
+        }
+        
+        .k10-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        
+        .k10-status {
+            margin-top: 10px;
+            padding: 10px;
+            background: #ffe0b2;
+            border-radius: 8px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .k10-status-label {
+            color: #e65100;
+            font-weight: 500;
+        }
+        
+        .k10-status-value {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .door-status {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .door-closed {
+            background: #c8e6c9;
+            color: #2e7d32;
+        }
+        
+        .door-open {
+            background: #ffcdd2;
+            color: #c62828;
+        }
+        
+        .lock-active {
+            background: #ffeb3b;
+            color: #333;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    `;
+    
+    const styleSheet = document.createElement('style');
+    styleSheet.textContent = styles;
+    document.head.appendChild(styleSheet);
+}
+
+/**
+ * Функция для отладки
+ */
 function log(message, type = 'info') {
-    console.log(`📱 ${message}`);
+    console.log(`📱 [Web] ${message}`);
     
-    const entry = document.createElement('div');
-    entry.className = `log-entry ${type}`;
-    
-    const time = new Date().toLocaleTimeString('ru-RU', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-    
-    entry.textContent = `[${time}] ${message}`;
-    logContent.appendChild(entry);
-    logContent.scrollTop = logContent.scrollHeight;
-}
-
-function updateConnectionStatus(connected) {
-    if (connected) {
-        statusLed.classList.add('connected');
-        statusText.textContent = 'ON';
-        connectBtn.textContent = 'ОТКЛЮЧИТЬСЯ';
-        connectBtn.classList.add('connected');
-    } else {
-        statusLed.classList.remove('connected');
-        statusText.textContent = 'OFF';
-        connectBtn.textContent = 'ПОДКЛЮЧИТЬСЯ';
-        connectBtn.classList.remove('connected');
+    const logDiv = document.getElementById('debug-log');
+    if (logDiv) {
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        
+        if (type === 'error') {
+            entry.style.color = '#ff6b6b';
+        } else if (type === 'success') {
+            entry.style.color = '#69db7e';
+        } else if (type === 'warning') {
+            entry.style.color = '#ffd93d';
+        }
+        
+        logDiv.appendChild(entry);
+        logDiv.scrollTop = logDiv.scrollHeight;
     }
 }
 
-// Мигание индикаторов
-setInterval(() => {
-    blinkState = !blinkState;
-    
-    if (currentMode === 'HUMIDIFY') {
-        humIndicator.style.opacity = blinkState ? '1' : '0.3';
-    } else if (currentMode === 'DEHUMIDIFY') {
-        humIndicator.style.opacity = blinkState ? '1' : '0.3';
-    } else {
-        humIndicator.style.opacity = '1';
-    }
-}, 500);
+// =========================================================================
+// Функции подключения
+// =========================================================================
 
-// ==========================================================================
-// BLE ПОДКЛЮЧЕНИЕ
-// ==========================================================================
-
+/**
+ * Подключение к BLE устройству
+ */
 async function connectToDevice() {
     try {
-        if (gattServer && gattServer.connected) {
+        // Если уже подключены, отключаемся
+        if (bluetoothDevice && gattServer?.connected) {
             await disconnectFromDevice();
             return;
         }
         
-        log('🔍 Поиск устройств GuitarCabinet...');
+        updateStatus('🔍 Поиск устройств...', 'connecting');
+        connectButton.disabled = true;
+        connectButton.textContent = '⏳ Поиск...';
         
+        log('Запрос устройств с сервисом ' + BLE_SERVICE_UUID);
+        
+        // Запрос устройства
         bluetoothDevice = await navigator.bluetooth.requestDevice({
             filters: [
                 { namePrefix: 'GuitarCabinet' }
@@ -106,425 +328,596 @@ async function connectToDevice() {
             optionalServices: [BLE_SERVICE_UUID]
         });
 
-        log(`✅ Найдено: ${bluetoothDevice.name}`);
+        log(`✅ Найдено устройство: ${bluetoothDevice.name}`);
         
+        updateStatus('🔌 Подключение...', 'connecting');
+        connectButton.textContent = '⏳ Подключение...';
+        
+        // Обработка отключения
         bluetoothDevice.addEventListener('gattserverdisconnected', handleDisconnect);
         
+        // Подключение к серверу GATT
+        log('Подключение к GATT серверу...');
         gattServer = await bluetoothDevice.gatt.connect();
         log('✅ GATT сервер подключен');
         
+        // Получение сервиса
+        log('Поиск сервиса...');
         service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
         log('✅ Сервис найден');
         
+        // Получение всех характеристик
         await discoverCharacteristics();
+        
+        // Подписка на уведомления
         await subscribeToNotifications();
         
-        updateConnectionStatus(true);
+        updateStatus('✅ Подключено', 'connected');
+        connectButton.textContent = '❌ Отключиться';
+        connectButton.classList.add('connected');
+        connectButton.disabled = false;
         
-        // Читаем начальные данные
-        await readAllSettings();
-        await readCurrentData();
-        await readSysInfo(); // Прочитаем sysInfo один раз
+        // Запрашиваем начальные данные
+        await requestInitialData();
+        
+        // Создаем секцию K10
+        createK10Section();
         
     } catch (error) {
         log(`❌ Ошибка: ${error.message}`, 'error');
-        updateConnectionStatus(false);
+        updateStatus(`❌ Ошибка: ${error.message}`, 'error');
+        connectButton.disabled = false;
+        connectButton.textContent = '🔄 Повторить подключение';
     }
 }
 
+/**
+ * Отключение от устройства
+ */
 async function disconnectFromDevice() {
     if (gattServer && gattServer.connected) {
         gattServer.disconnect();
+        log('🔌 Отключение...');
     }
 }
 
-function handleDisconnect() {
-    log('❌ Устройство отключено', 'error');
-    updateConnectionStatus(false);
-    characteristics = {};
-    gattServer = null;
-}
-
-async function resetBLE() {
-    log('🔄 Сброс BLE...');
-    
-    if (gattServer && gattServer.connected) {
-        await disconnectFromDevice();
-    }
-    
-    setTimeout(() => {
-        connectToDevice();
-    }, 1000);
-}
-
+/**
+ * Получение всех характеристик
+ */
 async function discoverCharacteristics() {
-    log('🔍 Поиск характеристик...');
+    log('Поиск характеристик...');
     
-    const charList = [
+    // Список характеристик для получения (ДОБАВЛЕНА K10)
+    const charUUIDs = [
         { name: 'targetHum', uuid: BLE_CHAR_TARGET_HUM_UUID },
         { name: 'currentTemp', uuid: BLE_CHAR_CURRENT_TEMP_UUID },
         { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },
         { name: 'allSettings', uuid: BLE_CHAR_ALL_SETTINGS_UUID },
-        { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID }
+        { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID },
+        { name: 'k10', uuid: BLE_CHAR_K10_UUID } // НОВАЯ характеристика для K10
     ];
     
-    for (const char of charList) {
+    for (const char of charUUIDs) {
         try {
+            log(`  - Поиск ${char.name}...`);
             characteristics[char.name] = await service.getCharacteristic(char.uuid);
-            log(`  ✓ ${char.name}`);
+            log(`    ✅ ${char.name} найден`);
         } catch (e) {
-            log(`  ✗ ${char.name}: ${e.message}`, 'error');
+            log(`    ⚠️ ${char.name} не найден: ${e.message}`, 'warning');
         }
     }
 }
 
-// ==========================================================================
-// ПОДПИСКА НА УВЕДОМЛЕНИЯ (ИСПРАВЛЕНО)
-// ==========================================================================
-
+/**
+ * Подписка на уведомления
+ */
 async function subscribeToNotifications() {
-    log('📡 Настройка уведомлений...');
+    log('Настройка уведомлений...');
     
-    // Только характеристики, которые поддерживают notify
-    const notifyChars = ['currentTemp', 'currentHum'];
+    // Характеристики для уведомлений
+    const notifyChars = ['currentTemp', 'currentHum', 'sysInfo'];
     
-    for (const name of notifyChars) {
-        const char = characteristics[name];
+    for (const charName of notifyChars) {
+        const char = characteristics[charName];
         if (char) {
             try {
                 await char.startNotifications();
-                char.addEventListener('characteristicvaluechanged', handleNotification);
-                log(`  ✓ ${name} уведомления активированы`);
+                
+                // Добавляем обработчик
+                char.addEventListener('characteristicvaluechanged', (event) => {
+                    handleNotification(charName, event.target.value);
+                });
+                
+                log(`  ✅ ${charName} уведомления активированы`);
             } catch (e) {
-                log(`  ✗ ${name}: ${e.message}`, 'error');
+                log(`  ❌ ${charName} уведомления не активированы: ${e.message}`, 'error');
             }
         }
     }
-    
-    log('  ℹ️ sysInfo только для чтения (без уведомлений)');
 }
 
-// ==========================================================================
-// ОБРАБОТКА ДАННЫХ
-// ==========================================================================
-
-function handleNotification(event) {
-    const value = event.target.value;
+/**
+ * Обработка уведомлений
+ */
+function handleNotification(charName, value) {
     const decoder = new TextDecoder('utf-8');
     const data = decoder.decode(value);
     
-    if (data.startsWith('T:')) {
-        const temp = parseFloat(data.substring(2));
-        updateTemperature(temp);
-    }
-    else if (data.startsWith('H:')) {
-        const hum = parseFloat(data.substring(2));
-        updateHumidity(hum);
-    }
-    else if (data.startsWith('MSG:')) {
-        topMessage.textContent = data.substring(4);
-    }
-}
-
-function updateTemperature(temp) {
-    const intPart = Math.floor(temp);
-    const fracPart = Math.floor(Math.abs(temp - intPart) * 10);
+    log(`📨 ${charName}: ${data}`);
     
-    tempInt.textContent = intPart;
-    tempFrac.textContent = `.${fracPart}`;
-}
-
-function updateHumidity(hum) {
-    const intPart = Math.floor(hum);
-    const fracPart = Math.floor(Math.abs(hum - intPart) * 10);
-    
-    humidityInt.textContent = intPart;
-    humidityFrac.textContent = `.${fracPart}`;
-}
-
-async function readCurrentData() {
-    if (characteristics.currentTemp) {
-        try {
-            const value = await characteristics.currentTemp.readValue();
-            const data = new TextDecoder().decode(value);
+    switch(charName) {
+        case 'currentTemp':
             if (data.startsWith('T:')) {
-                updateTemperature(parseFloat(data.substring(2)));
+                const temp = parseFloat(data.substring(2));
+                updateTempDisplay(temp);
             }
-        } catch (e) {}
-    }
-    
-    if (characteristics.currentHum) {
-        try {
-            const value = await characteristics.currentHum.readValue();
-            const data = new TextDecoder().decode(value);
+            break;
+            
+        case 'currentHum':
             if (data.startsWith('H:')) {
-                updateHumidity(parseFloat(data.substring(2)));
+                const hum = parseFloat(data.substring(2));
+                updateHumDisplay(hum);
             }
-        } catch (e) {}
+            break;
+            
+        case 'sysInfo':
+            if (data.startsWith('E:')) {
+                const eff = parseFloat(data.substring(2));
+                updateEfficiencyDisplay(eff);
+            } else if (data.startsWith('LOCK:')) {
+                // Обновляем статус замка
+                updateLockStatus(data.substring(5));
+            } else if (data.startsWith('DOOR:')) {
+                // Обновляем статус двери
+                updateDoorStatus(data.substring(5));
+            }
+            break;
     }
 }
 
-// ==========================================================================
-// ЧТЕНИЕ SYS INFO (НОВАЯ ФУНКЦИЯ)
-// ==========================================================================
+/**
+ * Обработка отключения
+ */
+function handleDisconnect(event) {
+    log('❌ Устройство отключено', 'error');
+    updateStatus('❌ Отключено', 'disconnected');
+    
+    if (connectButton) {
+        connectButton.textContent = '🔌 Подключиться к устройству';
+        connectButton.classList.remove('connected');
+        connectButton.disabled = false;
+    }
+    
+    // Удаляем секцию K10
+    const k10Section = document.getElementById('k10-section');
+    if (k10Section) k10Section.remove();
+    
+    // Очищаем отображение данных
+    const displays = ['temp-display', 'hum-display', 'eff-display', 'settings-display'];
+    displays.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    });
+}
 
-async function readSysInfo() {
-    if (!characteristics.sysInfo) {
-        log('❌ sysInfo характеристика не найдена', 'error');
+// =========================================================================
+// Функции для кнопки K10
+// =========================================================================
+
+/**
+ * Создание секции с кнопкой K10
+ */
+function createK10Section() {
+    // Проверяем, существует ли уже секция
+    if (document.getElementById('k10-section')) return;
+    
+    const container = document.querySelector('.container');
+    
+    const k10Section = document.createElement('div');
+    k10Section.id = 'k10-section';
+    k10Section.className = 'k10-section';
+    
+    k10Section.innerHTML = `
+        <h3>
+            <span>🔒 K10 - Магнитный замок</span>
+            <span id="lock-status-icon" style="font-size: 20px;">🔓</span>
+        </h3>
+        
+        <button id="k10-button" class="k10-button">
+            <span>🔒</span>
+            <span id="k10-button-text">Удерживайте для активации замка</span>
+        </button>
+        
+        <div class="k10-status">
+            <span class="k10-status-label">🚪 Состояние двери:</span>
+            <span id="door-status" class="door-status door-closed">Закрыта</span>
+        </div>
+        
+        <div class="k10-status">
+            <span class="k10-status-label">⏱️ Время удержания:</span>
+            <span id="hold-time" class="k10-status-value">1000 мс</span>
+        </div>
+        
+        <div class="k10-status" id="lock-active-indicator" style="display: none;">
+            <span class="k10-status-label">🔐 Замок активен</span>
+            <span class="lock-active">АКТИВИРОВАН</span>
+        </div>
+    `;
+    
+    container.appendChild(k10Section);
+    
+    // Добавляем обработчики событий
+    setupK10Button();
+    
+    // Запрашиваем начальный статус
+    requestK10Status();
+}
+
+/**
+ * Настройка обработчиков для кнопки K10
+ */
+function setupK10Button() {
+    const k10Button = document.getElementById('k10-button');
+    if (!k10Button) return;
+    
+    let pressTimer = null;
+    let isPressed = false;
+    const holdTimeMs = 1000; // Время удержания (можно будет получать из настроек)
+    
+    // Функция для отправки команды K10
+    async function sendK10Command(command) {
+        if (!characteristics.k10) {
+            log('❌ Характеристика K10 не найдена', 'error');
+            return false;
+        }
+        
+        try {
+            const encoder = new TextEncoder();
+            await characteristics.k10.writeValue(encoder.encode(command));
+            log(`📤 K10 команда: ${command}`, 'success');
+            
+            // Визуальная обратная связь
+            if (command === 'PRESS') {
+                k10Button.classList.add('pressed');
+            } else if (command === 'RELEASE') {
+                k10Button.classList.remove('pressed');
+            }
+            
+            return true;
+        } catch (error) {
+            log(`❌ Ошибка отправки K10 команды: ${error.message}`, 'error');
+            return false;
+        }
+    }
+    
+    // Обработчик нажатия (touch start для мобильных, mouse down для десктопа)
+    k10Button.addEventListener('mousedown', startPress);
+    k10Button.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        startPress(e);
+    });
+    
+    // Обработчик отпускания
+    k10Button.addEventListener('mouseup', releasePress);
+    k10Button.addEventListener('mouseleave', releasePress);
+    k10Button.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        releasePress(e);
+    });
+    k10Button.addEventListener('touchcancel', (e) => {
+        e.preventDefault();
+        releasePress(e);
+    });
+    
+    function startPress(e) {
+        if (isPressed) return;
+        isPressed = true;
+        
+        // Отправляем команду нажатия
+        sendK10Command('PRESS');
+        
+        // Обновляем текст кнопки
+        document.getElementById('k10-button-text').textContent = 'Удерживайте...';
+        
+        // Устанавливаем таймер для активации замка
+        pressTimer = setTimeout(async () => {
+            if (isPressed) {
+                // Отправляем команду активации замка
+                await sendK10Command('ACTIVATE');
+                document.getElementById('k10-button-text').textContent = 'Замок активирован!';
+                
+                // Показываем индикатор
+                const lockIndicator = document.getElementById('lock-active-indicator');
+                if (lockIndicator) lockIndicator.style.display = 'flex';
+                
+                // Меняем иконку
+                document.getElementById('lock-status-icon').textContent = '🔒';
+            }
+        }, holdTimeMs);
+    }
+    
+    function releasePress(e) {
+        if (!isPressed) return;
+        
+        // Очищаем таймер
+        if (pressTimer) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+        }
+        
+        // Отправляем команду отпускания
+        sendK10Command('RELEASE');
+        
+        // Возвращаем исходный текст
+        document.getElementById('k10-button-text').textContent = 'Удерживайте для активации замка';
+        k10Button.classList.remove('pressed');
+        
+        isPressed = false;
+    }
+}
+
+/**
+ * Запрос статуса K10
+ */
+async function requestK10Status() {
+    if (!characteristics.k10) return;
+    
+    try {
+        const value = await characteristics.k10.readValue();
+        const decoder = new TextDecoder('utf-8');
+        const data = decoder.decode(value);
+        
+        log(`📥 K10 статус: ${data}`);
+        parseK10Status(data);
+    } catch (error) {
+        log(`❌ Ошибка чтения статуса K10: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Парсинг статуса K10
+ */
+function parseK10Status(data) {
+    // Ожидаемый формат: "LOCK:active|inactive,DOOR:open|closed,HOLD:XXX"
+    const parts = data.split(',');
+    
+    parts.forEach(part => {
+        if (part.startsWith('LOCK:')) {
+            updateLockStatus(part.substring(5));
+        } else if (part.startsWith('DOOR:')) {
+            updateDoorStatus(part.substring(5));
+        } else if (part.startsWith('HOLD:')) {
+            const holdTime = document.getElementById('hold-time');
+            if (holdTime) {
+                holdTime.textContent = part.substring(5) + ' мс';
+            }
+        }
+    });
+}
+
+/**
+ * Обновление статуса замка
+ */
+function updateLockStatus(status) {
+    const lockIcon = document.getElementById('lock-status-icon');
+    const lockIndicator = document.getElementById('lock-active-indicator');
+    
+    if (!lockIcon || !lockIndicator) return;
+    
+    if (status === 'active') {
+        lockIcon.textContent = '🔒';
+        lockIndicator.style.display = 'flex';
+    } else {
+        lockIcon.textContent = '🔓';
+        lockIndicator.style.display = 'none';
+    }
+}
+
+/**
+ * Обновление статуса двери
+ */
+function updateDoorStatus(status) {
+    const doorElement = document.getElementById('door-status');
+    if (!doorElement) return;
+    
+    if (status === 'open') {
+        doorElement.textContent = 'Открыта';
+        doorElement.className = 'door-status door-open';
+    } else {
+        doorElement.textContent = 'Закрыта';
+        doorElement.className = 'door-status door-closed';
+    }
+}
+
+// =========================================================================
+// Функции обновления интерфейса
+// =========================================================================
+
+function updateStatus(text, state) {
+    statusText.textContent = text;
+    statusLed.classList.remove('status-led-connected');
+    
+    if (state === 'connected') {
+        statusLed.classList.add('status-led-connected');
+    }
+}
+
+function updateTempDisplay(temp) {
+    let element = document.getElementById('temp-display');
+    
+    if (!element) {
+        element = document.createElement('div');
+        element.id = 'temp-display';
+        element.className = 'sensor-card';
+        
+        // Вставляем после статуса
+        const status = document.querySelector('.status');
+        status.parentNode.insertBefore(element, status.nextSibling);
+    }
+    
+    element.innerHTML = `
+        <div class="sensor-label">🌡️ Температура</div>
+        <div class="sensor-value">${temp.toFixed(1)}°C</div>
+    `;
+}
+
+function updateHumDisplay(hum) {
+    let element = document.getElementById('hum-display');
+    
+    if (!element) {
+        element = document.createElement('div');
+        element.id = 'hum-display';
+        element.className = 'sensor-card';
+        
+        const tempDisplay = document.getElementById('temp-display');
+        if (tempDisplay) {
+            tempDisplay.parentNode.insertBefore(element, tempDisplay.nextSibling);
+        } else {
+            const status = document.querySelector('.status');
+            status.parentNode.insertBefore(element, status.nextSibling);
+        }
+    }
+    
+    element.innerHTML = `
+        <div class="sensor-label">💧 Влажность</div>
+        <div class="sensor-value">${hum.toFixed(1)}%</div>
+    `;
+}
+
+function updateEfficiencyDisplay(eff) {
+    let element = document.getElementById('eff-display');
+    
+    if (!element) {
+        element = document.createElement('div');
+        element.id = 'eff-display';
+        element.className = 'sensor-card';
+        
+        const humDisplay = document.getElementById('hum-display');
+        if (humDisplay) {
+            humDisplay.parentNode.insertBefore(element, humDisplay.nextSibling);
+        } else {
+            const status = document.querySelector('.status');
+            status.parentNode.insertBefore(element, status.nextSibling);
+        }
+    }
+    
+    element.innerHTML = `
+        <div class="sensor-label">⚡ Эффективность</div>
+        <div class="sensor-value">${eff.toFixed(1)}%/мин</div>
+    `;
+}
+
+// =========================================================================
+// Функции записи данных
+// =========================================================================
+
+async function setTargetHumidity(value) {
+    if (!characteristics.targetHum) {
+        log('❌ Характеристика targetHum не найдена', 'error');
         return;
     }
     
     try {
-        const value = await characteristics.sysInfo.readValue();
-        const decoder = new TextDecoder('utf-8');
-        const data = decoder.decode(value);
-        
-        if (data.startsWith('E:')) {
-            const efficiency = parseFloat(data.substring(2));
-            log(`📊 Эффективность: ${efficiency.toFixed(1)}%/мин`);
-        } else {
-            log(`📊 sysInfo: ${data}`);
-        }
-        
-        return data;
+        const encoder = new TextEncoder();
+        await characteristics.targetHum.writeValue(encoder.encode(value.toString()));
+        log(`✅ Целевая влажность установлена: ${value}%`, 'success');
     } catch (error) {
-        log(`❌ Ошибка чтения sysInfo: ${error.message}`, 'error');
+        log(`❌ Ошибка записи: ${error.message}`, 'error');
     }
 }
 
-// Периодическое чтение sysInfo (раз в 30 секунд)
-setInterval(() => {
-    if (gattServer && gattServer.connected) {
-        readSysInfo();
+async function requestInitialData() {
+    if (!characteristics.allSettings) {
+        log('❌ Характеристика allSettings не найдена', 'error');
+        return;
     }
-}, 30000);
-
-// ==========================================================================
-// РАБОТА С НАСТРОЙКАМИ
-// ==========================================================================
-
-async function readAllSettings() {
-    if (!characteristics.allSettings) return;
     
     try {
-        log('📥 Чтение настроек...');
+        log('📥 Запрос настроек...');
         const value = await characteristics.allSettings.readValue();
         const decoder = new TextDecoder('utf-8');
         const data = decoder.decode(value);
         
-        parseSettings(data);
-        displaySettingsList();
-        
-        log(`📊 Настройки получены (${Object.keys(currentSettings).length} параметров)`);
-        
+        log(`📥 Настройки: ${data}`, 'success');
+        parseAndDisplaySettings(data);
     } catch (error) {
         log(`❌ Ошибка чтения настроек: ${error.message}`, 'error');
     }
 }
 
-function parseSettings(data) {
-    if (!data) return;
+function parseAndDisplaySettings(data) {
+    let element = document.getElementById('settings-display');
     
+    if (!element) {
+        element = document.createElement('div');
+        element.id = 'settings-display';
+        element.className = 'settings-card';
+        
+        const effDisplay = document.getElementById('eff-display');
+        if (effDisplay) {
+            effDisplay.parentNode.insertBefore(element, effDisplay.nextSibling);
+        } else {
+            document.querySelector('.container').appendChild(element);
+        }
+    }
+    
+    // Парсим настройки
+    const settings = {};
     const pairs = data.split(',');
-    currentSettings = {}; // Сброс
     
     pairs.forEach(pair => {
         const [key, value] = pair.split('=');
         if (key && value) {
-            currentSettings[key.trim()] = value.trim();
+            settings[key] = value;
         }
     });
     
-    // Обновляем отображение цели
-    if (currentSettings.targetHumidity) {
-        targetDisplay.textContent = `Цель: ${currentSettings.targetHumidity}%`;
+    log('📊 Получены настройки:', settings);
+    
+    let html = '<h2>⚙️ Настройки</h2>';
+    
+    if (settings.targetHumidity) {
+        html += `
+            <div class="setting-item">
+                <label>🎯 Целевая влажность: <span id="target-hum-value">${settings.targetHumidity}%</span></label>
+                <input type="range" id="target-hum-slider" min="0" max="100" value="${settings.targetHumidity}">
+            </div>
+        `;
+    }
+    
+    if (settings.lockHoldTime) {
+        html += `
+            <div class="setting-item">
+                <label>🔒 Время удержания замка:</label>
+                <span>${settings.lockHoldTime} мс</span>
+            </div>
+        `;
+    }
+    
+    if (settings.waterHeaterEnabled !== undefined) {
+        html += `
+            <div class="setting-item">
+                <label>💧 Подогрев воды:</label>
+                <span class="${settings.waterHeaterEnabled === '1' ? 'status-on' : 'status-off'}">
+                    ${settings.waterHeaterEnabled === '1' ? 'ВКЛ 🔥' : 'ВЫКЛ ❄️'}
+                </span>
+            </div>
+        `;
+    }
+    
+    element.innerHTML = html;
+    
+    // Добавляем обработчик для слайдера
+    const slider = document.getElementById('target-hum-slider');
+    const valueSpan = document.getElementById('target-hum-value');
+    
+    if (slider && valueSpan) {
+        slider.addEventListener('input', (e) => {
+            valueSpan.textContent = e.target.value + '%';
+        });
+        
+        slider.addEventListener('change', (e) => {
+            setTargetHumidity(e.target.value);
+        });
     }
 }
-
-// ==========================================================================
-// ОТОБРАЖЕНИЕ СПИСКА НАСТРОЕК
-// ==========================================================================
-
-const menuItems = [
-    { key: 'targetHumidity', name: 'ВЛАЖНОСТЬ (H%)', unit: '%', min: 0, max: 100, step: 1 },
-    { key: 'lockTimeIndex', name: 'БЛОКИРОВКА', type: 'options', 
-      options: ['ОТКЛ', '30 сек', '1 мин', '2 мин', '5 мин'] },
-    { key: 'menuTimeoutOptionIndex', name: 'ТАЙМАУТ МЕНЮ', type: 'options',
-      options: ['ОТКЛ', '15 сек', '30 сек', '1 мин', '2 мин'] },
-    { key: 'screenTimeoutOptionIndex', name: 'ТАЙМАУТ ЭКРАНА', type: 'options',
-      options: ['ОТКЛ', '30 сек', '1 мин', '5 мин', '10 мин'] },
-    { key: 'lockHoldTime', name: 'ЗАМОК УДЕРЖАНИЕ', unit: 'мс', min: 100, max: 5000, step: 100 },
-    { key: 'doorSoundEnabled', name: 'ЗВУК ДВЕРИ', type: 'boolean' },
-    { key: 'waterSilicaSoundEnabled', name: 'ЗВУК РЕСУРСОВ', type: 'boolean' },
-    { key: 'waterHeaterEnabled', name: 'ПОДОГРЕВ ВОДЫ', type: 'boolean' },
-    { key: 'waterHeaterMaxTemp', name: 'ТЕМП. ПОДОГРЕВА', unit: '°C', min: 20, max: 40, step: 1 },
-    { key: 'deadZonePercent', name: 'МЕРТВАЯ ЗОНА', unit: '%', min: 0, max: 10, step: 0.1 },
-    { key: 'minHumidityChange', name: 'МИН. ИЗМЕНЕНИЕ', unit: '%', min: 0, max: 5, step: 0.1 },
-    { key: 'maxOperationDuration', name: 'МАКС. ВРЕМЯ', unit: 'мин', min: 1, max: 10, step: 1 },
-    { key: 'operationCooldown', name: 'ВРЕМЯ ОТДЫХА', unit: 'мин', min: 1, max: 5, step: 1 },
-    { key: 'maxSafeHumidity', name: 'МАКС. БЕЗОПАСНАЯ', unit: '%', min: 50, max: 90, step: 1 },
-    { key: 'resourceCheckDiff', name: 'ПОРОГ РЕСУРСА', unit: '%', min: 1, max: 10, step: 1 },
-    { key: 'hysteresis', name: 'ГИСТЕРЕЗИС', unit: '%', min: 0, max: 5, step: 0.1 },
-    { key: 'lowFaultThreshold', name: 'ПОРОГ "МАЛО"', min: 1, max: 10, step: 1 },
-    { key: 'emptyFaultThreshold', name: 'ПОРОГ "НЕТ"', min: 1, max: 20, step: 1 }
-];
-
-function displaySettingsList() {
-    let html = '';
-    
-    menuItems.forEach(item => {
-        if (currentSettings[item.key] !== undefined) {
-            const value = formatSettingValue(item, currentSettings[item.key]);
-            
-            html += `
-                <div class="setting-row" onclick="editSetting('${item.key}')">
-                    <span class="setting-name">${item.name}</span>
-                    <span class="setting-value">${value}</span>
-                </div>
-            `;
-        }
-    });
-    
-    settingsList.innerHTML = html;
-}
-
-function formatSettingValue(item, value) {
-    if (item.type === 'options') {
-        const index = parseInt(value);
-        return item.options[index] || 'ОТКЛ';
-    }
-    
-    if (item.type === 'boolean') {
-        return value === '1' ? 'ВКЛ' : 'ВЫКЛ';
-    }
-    
-    if (item.unit) {
-        // Для дробных чисел форматируем
-        const num = parseFloat(value);
-        if (item.step === 0.1) {
-            return num.toFixed(1) + item.unit;
-        }
-        return value + item.unit;
-    }
-    
-    return value;
-}
-
-// ==========================================================================
-// РЕДАКТИРОВАНИЕ НАСТРОЕК
-// ==========================================================================
-
-window.editSetting = function(key) {
-    const item = menuItems.find(i => i.key === key);
-    if (!item) return;
-    
-    const currentValue = currentSettings[key];
-    
-    let newValue;
-    
-    if (item.type === 'boolean') {
-        newValue = currentValue === '1' ? '0' : '1';
-        sendSetting(key, newValue);
-    }
-    else if (item.type === 'options') {
-        const maxIndex = item.options.length - 1;
-        let currentIndex = parseInt(currentValue) || 0;
-        newValue = ((currentIndex + 1) > maxIndex) ? 0 : (currentIndex + 1);
-        sendSetting(key, newValue.toString());
-    }
-    else {
-        let promptText = `Введите значение для ${item.name}`;
-        if (item.min !== undefined && item.max !== undefined) {
-            promptText += ` (${item.min} - ${item.max})`;
-        }
-        promptText += ':';
-        
-        const input = prompt(promptText, currentValue);
-        
-        if (input !== null) {
-            let numValue = parseFloat(input);
-            
-            if (!isNaN(numValue)) {
-                if (item.min !== undefined && numValue < item.min) numValue = item.min;
-                if (item.max !== undefined && numValue > item.max) numValue = item.max;
-                
-                if (item.step === 0.1) {
-                    numValue = Math.round(numValue * 10) / 10;
-                } else {
-                    numValue = Math.round(numValue);
-                }
-                
-                sendSetting(key, numValue.toString());
-            }
-        }
-    }
-}
-
-async function sendSetting(key, value) {
-    if (!characteristics.allSettings) {
-        log('❌ Характеристика настроек не найдена', 'error');
-        return;
-    }
-    
-    try {
-        currentSettings[key] = value;
-        
-        let settingsString = '';
-        for (const [k, v] of Object.entries(currentSettings)) {
-            if (settingsString) settingsString += ',';
-            settingsString += `${k}=${v}`;
-        }
-        
-        const encoder = new TextEncoder();
-        await characteristics.allSettings.writeValue(encoder.encode(settingsString));
-        
-        log(`✅ Настройка ${key} = ${value} отправлена`, 'success');
-        
-        displaySettingsList();
-        
-        if (key === 'targetHumidity') {
-            targetDisplay.textContent = `Цель: ${value}%`;
-        }
-        
-    } catch (error) {
-        log(`❌ Ошибка отправки: ${error.message}`, 'error');
-    }
-}
-
-// ==========================================================================
-// УПРАВЛЕНИЕ ЛОГОМ
-// ==========================================================================
-
-window.toggleLog = function() {
-    const log = document.getElementById('logContent');
-    const toggle = document.getElementById('logToggle');
-    
-    if (log.style.display === 'none') {
-        log.style.display = 'block';
-        toggle.textContent = '▼';
-    } else {
-        log.style.display = 'none';
-        toggle.textContent = '▶';
-    }
-}
-
-// ==========================================================================
-// ИНИЦИАЛИЗАЦИЯ
-// ==========================================================================
-
-if (!navigator.bluetooth) {
-    log('❌ Web Bluetooth не поддерживается!', 'error');
-    connectBtn.disabled = true;
-} else {
-    log('✅ Web Bluetooth поддерживается');
-    log('🔄 Ожидание подключения...');
-}
-
-connectBtn.addEventListener('click', connectToDevice);
-resetBtn.addEventListener('click', resetBLE);
-
-updateConnectionStatus(false);
-humidityInt.textContent = '--';
-tempInt.textContent = '--';
-topMessage.textContent = 'ОЖИДАНИЕ...';
-modeDisplay.textContent = 'РЕЖИМ: ОЖИДАНИЕ';
