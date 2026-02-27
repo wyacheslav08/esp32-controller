@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface for Guitar Cabinet Controller - С КНОПКОЙ K10
+// BLE Web Interface for Guitar Cabinet Controller - ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -9,9 +9,7 @@ const BLE_CHAR_CURRENT_TEMP_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a2";
 const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
 const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
 const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
-
-// НОВЫЙ UUID для K10
-const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
+const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6"; // ВАЖНО!
 
 // Глобальные переменные
 let bluetoothDevice = null;
@@ -24,6 +22,9 @@ const statusLed = document.querySelector('.status-led');
 const statusText = document.getElementById('statusText');
 let connectButton = null;
 let debugElement = null;
+
+// Временное хранилище измененных настроек
+let pendingSettings = {};
 
 // =========================================================================
 // Инициализация интерфейса
@@ -267,6 +268,15 @@ function addStyles() {
             50% { opacity: 0.5; }
             100% { opacity: 1; }
         }
+        
+        .status-on {
+            color: #4caf50;
+            font-weight: bold;
+        }
+        .status-off {
+            color: #f44336;
+            font-weight: bold;
+        }
     `;
     
     const styleSheet = document.createElement('style');
@@ -299,16 +309,21 @@ function log(message, type = 'info') {
     }
 }
 
+function updateStatus(text, state) {
+    statusText.textContent = text;
+    statusLed.classList.remove('status-led-connected');
+    
+    if (state === 'connected') {
+        statusLed.classList.add('status-led-connected');
+    }
+}
+
 // =========================================================================
 // Функции подключения
 // =========================================================================
 
-/**
- * Подключение к BLE устройству
- */
 async function connectToDevice() {
     try {
-        // Если уже подключены, отключаемся
         if (bluetoothDevice && gattServer?.connected) {
             await disconnectFromDevice();
             return;
@@ -320,7 +335,6 @@ async function connectToDevice() {
         
         log('Запрос устройств с сервисом ' + BLE_SERVICE_UUID);
         
-        // Запрос устройства
         bluetoothDevice = await navigator.bluetooth.requestDevice({
             filters: [
                 { namePrefix: 'GuitarCabinet' }
@@ -333,23 +347,17 @@ async function connectToDevice() {
         updateStatus('🔌 Подключение...', 'connecting');
         connectButton.textContent = '⏳ Подключение...';
         
-        // Обработка отключения
         bluetoothDevice.addEventListener('gattserverdisconnected', handleDisconnect);
         
-        // Подключение к серверу GATT
         log('Подключение к GATT серверу...');
         gattServer = await bluetoothDevice.gatt.connect();
         log('✅ GATT сервер подключен');
         
-        // Получение сервиса
         log('Поиск сервиса...');
         service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
         log('✅ Сервис найден');
         
-        // Получение всех характеристик
         await discoverCharacteristics();
-        
-        // Подписка на уведомления
         await subscribeToNotifications();
         
         updateStatus('✅ Подключено', 'connected');
@@ -357,11 +365,15 @@ async function connectToDevice() {
         connectButton.classList.add('connected');
         connectButton.disabled = false;
         
-        // Запрашиваем начальные данные
         await requestInitialData();
         
-        // Создаем секцию K10
+        // СОЗДАЕМ СЕКЦИЮ K10
         createK10Section();
+        
+        // Запрашиваем статус K10
+        if (characteristics.k10) {
+            requestK10Status();
+        }
         
     } catch (error) {
         log(`❌ Ошибка: ${error.message}`, 'error');
@@ -371,9 +383,6 @@ async function connectToDevice() {
     }
 }
 
-/**
- * Отключение от устройства
- */
 async function disconnectFromDevice() {
     if (gattServer && gattServer.connected) {
         gattServer.disconnect();
@@ -381,20 +390,16 @@ async function disconnectFromDevice() {
     }
 }
 
-/**
- * Получение всех характеристик
- */
 async function discoverCharacteristics() {
     log('Поиск характеристик...');
     
-    // Список характеристик для получения (ДОБАВЛЕНА K10)
     const charUUIDs = [
         { name: 'targetHum', uuid: BLE_CHAR_TARGET_HUM_UUID },
         { name: 'currentTemp', uuid: BLE_CHAR_CURRENT_TEMP_UUID },
         { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },
         { name: 'allSettings', uuid: BLE_CHAR_ALL_SETTINGS_UUID },
         { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID },
-        { name: 'k10', uuid: BLE_CHAR_K10_UUID } // НОВАЯ характеристика для K10
+        { name: 'k10', uuid: BLE_CHAR_K10_UUID } // ВАЖНО!
     ];
     
     for (const char of charUUIDs) {
@@ -408,13 +413,9 @@ async function discoverCharacteristics() {
     }
 }
 
-/**
- * Подписка на уведомления
- */
 async function subscribeToNotifications() {
     log('Настройка уведомлений...');
     
-    // Характеристики для уведомлений
     const notifyChars = ['currentTemp', 'currentHum', 'sysInfo'];
     
     for (const charName of notifyChars) {
@@ -423,7 +424,6 @@ async function subscribeToNotifications() {
             try {
                 await char.startNotifications();
                 
-                // Добавляем обработчик
                 char.addEventListener('characteristicvaluechanged', (event) => {
                     handleNotification(charName, event.target.value);
                 });
@@ -436,9 +436,6 @@ async function subscribeToNotifications() {
     }
 }
 
-/**
- * Обработка уведомлений
- */
 function handleNotification(charName, value) {
     const decoder = new TextDecoder('utf-8');
     const data = decoder.decode(value);
@@ -465,19 +462,14 @@ function handleNotification(charName, value) {
                 const eff = parseFloat(data.substring(2));
                 updateEfficiencyDisplay(eff);
             } else if (data.startsWith('LOCK:')) {
-                // Обновляем статус замка
                 updateLockStatus(data.substring(5));
             } else if (data.startsWith('DOOR:')) {
-                // Обновляем статус двери
                 updateDoorStatus(data.substring(5));
             }
             break;
     }
 }
 
-/**
- * Обработка отключения
- */
 function handleDisconnect(event) {
     log('❌ Устройство отключено', 'error');
     updateStatus('❌ Отключено', 'disconnected');
@@ -488,11 +480,9 @@ function handleDisconnect(event) {
         connectButton.disabled = false;
     }
     
-    // Удаляем секцию K10
     const k10Section = document.getElementById('k10-section');
     if (k10Section) k10Section.remove();
     
-    // Очищаем отображение данных
     const displays = ['temp-display', 'hum-display', 'eff-display', 'settings-display'];
     displays.forEach(id => {
         const el = document.getElementById(id);
@@ -501,231 +491,8 @@ function handleDisconnect(event) {
 }
 
 // =========================================================================
-// Функции для кнопки K10
+// Функции отображения датчиков
 // =========================================================================
-
-/**
- * Создание секции с кнопкой K10
- */
-function createK10Section() {
-    // Проверяем, существует ли уже секция
-    if (document.getElementById('k10-section')) return;
-    
-    const container = document.querySelector('.container');
-    
-    const k10Section = document.createElement('div');
-    k10Section.id = 'k10-section';
-    k10Section.className = 'k10-section';
-    
-    k10Section.innerHTML = `
-        <h3>
-            <span>🔒 K10 - Магнитный замок</span>
-            <span id="lock-status-icon" style="font-size: 20px;">🔓</span>
-        </h3>
-        
-        <button id="k10-button" class="k10-button">
-            <span>🔒</span>
-            <span id="k10-button-text">Удерживайте для активации замка</span>
-        </button>
-        
-        <div class="k10-status">
-            <span class="k10-status-label">🚪 Состояние двери:</span>
-            <span id="door-status" class="door-status door-closed">Закрыта</span>
-        </div>
-        
-        <div class="k10-status">
-            <span class="k10-status-label">⏱️ Время удержания:</span>
-            <span id="hold-time" class="k10-status-value">1000 мс</span>
-        </div>
-        
-        <div class="k10-status" id="lock-active-indicator" style="display: none;">
-            <span class="k10-status-label">🔐 Замок активен</span>
-            <span class="lock-active">АКТИВИРОВАН</span>
-        </div>
-    `;
-    
-    container.appendChild(k10Section);
-    
-    // Добавляем обработчики событий
-    setupK10Button();
-}
-
-/**
- * Настройка обработчиков для кнопки K10
- */
-function setupK10Button() {
-    const k10Button = document.getElementById('k10-button');
-    if (!k10Button) return;
-    
-    let pressTimer = null;
-    let isPressed = false;
-    const holdTimeMs = 1000; // Время удержания
-    
-    // Функция для отправки команды K10
-    async function sendK10Command(command) {
-        if (!characteristics.k10) {
-            log('❌ Характеристика K10 не найдена', 'error');
-            return false;
-        }
-        
-        try {
-            const encoder = new TextEncoder();
-            await characteristics.k10.writeValue(encoder.encode(command));
-            log(`📤 K10 команда: ${command}`, 'success');
-            
-            // Визуальная обратная связь
-            if (command === 'PRESS') {
-                k10Button.classList.add('pressed');
-            } else if (command === 'RELEASE') {
-                k10Button.classList.remove('pressed');
-            }
-            
-            return true;
-        } catch (error) {
-            log(`❌ Ошибка отправки K10 команды: ${error.message}`, 'error');
-            return false;
-        }
-    }
-    
-    // Обработчик нажатия
-    k10Button.addEventListener('mousedown', startPress);
-    k10Button.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        startPress(e);
-    });
-    
-    // Обработчик отпускания
-    k10Button.addEventListener('mouseup', releasePress);
-    k10Button.addEventListener('mouseleave', releasePress);
-    k10Button.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        releasePress(e);
-    });
-    k10Button.addEventListener('touchcancel', (e) => {
-        e.preventDefault();
-        releasePress(e);
-    });
-    
-    function startPress(e) {
-        if (isPressed) return;
-        isPressed = true;
-        
-        sendK10Command('PRESS');
-        document.getElementById('k10-button-text').textContent = 'Удерживайте...';
-        
-        pressTimer = setTimeout(async () => {
-            if (isPressed) {
-                await sendK10Command('ACTIVATE');
-                document.getElementById('k10-button-text').textContent = 'Замок активирован!';
-                
-                const lockIndicator = document.getElementById('lock-active-indicator');
-                if (lockIndicator) lockIndicator.style.display = 'flex';
-                
-                document.getElementById('lock-status-icon').textContent = '🔒';
-            }
-        }, holdTimeMs);
-    }
-    
-    function releasePress(e) {
-        if (!isPressed) return;
-        
-        if (pressTimer) {
-            clearTimeout(pressTimer);
-            pressTimer = null;
-        }
-        
-        sendK10Command('RELEASE');
-        document.getElementById('k10-button-text').textContent = 'Удерживайте для активации замка';
-        k10Button.classList.remove('pressed');
-        
-        isPressed = false;
-    }
-}
-
-/**
- * Запрос статуса K10
- */
-async function requestK10Status() {
-    if (!characteristics.k10) return;
-    
-    try {
-        const value = await characteristics.k10.readValue();
-        const decoder = new TextDecoder('utf-8');
-        const data = decoder.decode(value);
-        
-        log(`📥 K10 статус: ${data}`);
-        parseK10Status(data);
-    } catch (error) {
-        log(`❌ Ошибка чтения статуса K10: ${error.message}`, 'error');
-    }
-}
-
-/**
- * Парсинг статуса K10
- */
-function parseK10Status(data) {
-    const parts = data.split(',');
-    
-    parts.forEach(part => {
-        if (part.startsWith('LOCK:')) {
-            updateLockStatus(part.substring(5));
-        } else if (part.startsWith('DOOR:')) {
-            updateDoorStatus(part.substring(5));
-        } else if (part.startsWith('HOLD:')) {
-            const holdTime = document.getElementById('hold-time');
-            if (holdTime) {
-                holdTime.textContent = part.substring(5) + ' мс';
-            }
-        }
-    });
-}
-
-/**
- * Обновление статуса замка
- */
-function updateLockStatus(status) {
-    const lockIcon = document.getElementById('lock-status-icon');
-    const lockIndicator = document.getElementById('lock-active-indicator');
-    
-    if (!lockIcon || !lockIndicator) return;
-    
-    if (status === 'active') {
-        lockIcon.textContent = '🔒';
-        lockIndicator.style.display = 'flex';
-    } else {
-        lockIcon.textContent = '🔓';
-        lockIndicator.style.display = 'none';
-    }
-}
-
-/**
- * Обновление статуса двери
- */
-function updateDoorStatus(status) {
-    const doorElement = document.getElementById('door-status');
-    if (!doorElement) return;
-    
-    if (status === 'open') {
-        doorElement.textContent = 'Открыта';
-        doorElement.className = 'door-status door-open';
-    } else {
-        doorElement.textContent = 'Закрыта';
-        doorElement.className = 'door-status door-closed';
-    }
-}
-
-// =========================================================================
-// Функции обновления интерфейса
-// =========================================================================
-
-function updateStatus(text, state) {
-    statusText.textContent = text;
-    statusLed.classList.remove('status-led-connected');
-    
-    if (state === 'connected') {
-        statusLed.classList.add('status-led-connected');
-    }
-}
 
 function updateTempDisplay(temp) {
     let element = document.getElementById('temp-display');
@@ -735,7 +502,6 @@ function updateTempDisplay(temp) {
         element.id = 'temp-display';
         element.className = 'sensor-card';
         
-        // Вставляем после статуса
         const status = document.querySelector('.status');
         status.parentNode.insertBefore(element, status.nextSibling);
     }
@@ -793,23 +559,199 @@ function updateEfficiencyDisplay(eff) {
 }
 
 // =========================================================================
-// Функции записи данных
+// Функции для кнопки K10
 // =========================================================================
 
-async function setTargetHumidity(value) {
-    if (!characteristics.targetHum) {
-        log('❌ Характеристика targetHum не найдена', 'error');
-        return;
+function createK10Section() {
+    if (document.getElementById('k10-section')) return;
+    
+    const container = document.querySelector('.container');
+    
+    const k10Section = document.createElement('div');
+    k10Section.id = 'k10-section';
+    k10Section.className = 'k10-section';
+    
+    k10Section.innerHTML = `
+        <h3>
+            <span>🔒 K10 - Магнитный замок</span>
+            <span id="lock-status-icon" style="font-size: 20px;">🔓</span>
+        </h3>
+        
+        <button id="k10-button" class="k10-button">
+            <span>🔒</span>
+            <span id="k10-button-text">Удерживайте для активации замка</span>
+        </button>
+        
+        <div class="k10-status">
+            <span class="k10-status-label">🚪 Состояние двери:</span>
+            <span id="door-status" class="door-status door-closed">Закрыта</span>
+        </div>
+        
+        <div class="k10-status">
+            <span class="k10-status-label">⏱️ Время удержания:</span>
+            <span id="hold-time" class="k10-status-value">1000 мс</span>
+        </div>
+        
+        <div class="k10-status" id="lock-active-indicator" style="display: none;">
+            <span class="k10-status-label">🔐 Замок активен</span>
+            <span class="lock-active">АКТИВИРОВАН</span>
+        </div>
+    `;
+    
+    container.appendChild(k10Section);
+    
+    setupK10Button();
+}
+
+function setupK10Button() {
+    const k10Button = document.getElementById('k10-button');
+    if (!k10Button) return;
+    
+    let pressTimer = null;
+    let isPressed = false;
+    
+    async function sendK10Command(command) {
+        if (!characteristics.k10) {
+            log('❌ Характеристика K10 не найдена', 'error');
+            return false;
+        }
+        
+        try {
+            const encoder = new TextEncoder();
+            await characteristics.k10.writeValue(encoder.encode(command));
+            log(`📤 K10 команда: ${command}`, 'success');
+            
+            if (command === 'PRESS') {
+                k10Button.classList.add('pressed');
+            } else if (command === 'RELEASE') {
+                k10Button.classList.remove('pressed');
+            }
+            
+            return true;
+        } catch (error) {
+            log(`❌ Ошибка отправки K10 команды: ${error.message}`, 'error');
+            return false;
+        }
     }
     
-    try {
-        const encoder = new TextEncoder();
-        await characteristics.targetHum.writeValue(encoder.encode(value.toString()));
-        log(`✅ Целевая влажность установлена: ${value}%`, 'success');
-    } catch (error) {
-        log(`❌ Ошибка записи: ${error.message}`, 'error');
+    k10Button.addEventListener('mousedown', startPress);
+    k10Button.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        startPress(e);
+    });
+    
+    k10Button.addEventListener('mouseup', releasePress);
+    k10Button.addEventListener('mouseleave', releasePress);
+    k10Button.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        releasePress(e);
+    });
+    k10Button.addEventListener('touchcancel', (e) => {
+        e.preventDefault();
+        releasePress(e);
+    });
+    
+    function startPress(e) {
+        if (isPressed) return;
+        isPressed = true;
+        
+        sendK10Command('PRESS');
+        document.getElementById('k10-button-text').textContent = 'Удерживайте...';
+        
+        const holdTimeMs = parseInt(document.getElementById('hold-time')?.textContent) || 1000;
+        
+        pressTimer = setTimeout(async () => {
+            if (isPressed) {
+                await sendK10Command('ACTIVATE');
+                document.getElementById('k10-button-text').textContent = 'Замок активирован!';
+                
+                const lockIndicator = document.getElementById('lock-active-indicator');
+                if (lockIndicator) lockIndicator.style.display = 'flex';
+                
+                document.getElementById('lock-status-icon').textContent = '🔒';
+            }
+        }, holdTimeMs);
+    }
+    
+    function releasePress(e) {
+        if (!isPressed) return;
+        
+        if (pressTimer) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+        }
+        
+        sendK10Command('RELEASE');
+        document.getElementById('k10-button-text').textContent = 'Удерживайте для активации замка';
+        k10Button.classList.remove('pressed');
+        
+        isPressed = false;
     }
 }
+
+async function requestK10Status() {
+    if (!characteristics.k10) return;
+    
+    try {
+        const value = await characteristics.k10.readValue();
+        const decoder = new TextDecoder('utf-8');
+        const data = decoder.decode(value);
+        
+        log(`📥 K10 статус: ${data}`);
+        parseK10Status(data);
+    } catch (error) {
+        log(`❌ Ошибка чтения статуса K10: ${error.message}`, 'error');
+    }
+}
+
+function parseK10Status(data) {
+    const parts = data.split(',');
+    
+    parts.forEach(part => {
+        if (part.startsWith('LOCK:')) {
+            updateLockStatus(part.substring(5));
+        } else if (part.startsWith('DOOR:')) {
+            updateDoorStatus(part.substring(5));
+        } else if (part.startsWith('HOLD:')) {
+            const holdTime = document.getElementById('hold-time');
+            if (holdTime) {
+                holdTime.textContent = part.substring(5) + ' мс';
+            }
+        }
+    });
+}
+
+function updateLockStatus(status) {
+    const lockIcon = document.getElementById('lock-status-icon');
+    const lockIndicator = document.getElementById('lock-active-indicator');
+    
+    if (!lockIcon || !lockIndicator) return;
+    
+    if (status === 'active') {
+        lockIcon.textContent = '🔒';
+        lockIndicator.style.display = 'flex';
+    } else {
+        lockIcon.textContent = '🔓';
+        lockIndicator.style.display = 'none';
+    }
+}
+
+function updateDoorStatus(status) {
+    const doorElement = document.getElementById('door-status');
+    if (!doorElement) return;
+    
+    if (status === 'open') {
+        doorElement.textContent = 'Открыта';
+        doorElement.className = 'door-status door-open';
+    } else {
+        doorElement.textContent = 'Закрыта';
+        doorElement.className = 'door-status door-closed';
+    }
+}
+
+// =========================================================================
+// Функции работы с настройками
+// =========================================================================
 
 async function requestInitialData() {
     if (!characteristics.allSettings) {
@@ -846,7 +788,6 @@ function parseAndDisplaySettings(data) {
         }
     }
     
-    // Парсим настройки
     const settings = {};
     const pairs = data.split(',');
     
@@ -874,8 +815,8 @@ function parseAndDisplaySettings(data) {
     if (settings.lockHoldTime) {
         html += `
             <div class="setting-item">
-                <label>🔒 Время удержания замка:</label>
-                <span>${settings.lockHoldTime} мс</span>
+                <label>🔒 Время удержания замка: <span id="lock-hold-value">${settings.lockHoldTime} мс</span></label>
+                <input type="range" id="lock-hold-slider" min="100" max="5000" step="100" value="${settings.lockHoldTime}">
             </div>
         `;
     }
@@ -898,7 +839,8 @@ function parseAndDisplaySettings(data) {
                 <div>Статус: <span class="${settings.waterHeaterEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterHeaterEnabled === '1' ? 'ВКЛ 🔥' : 'ВЫКЛ ❄️'}</span></div>
         `;
         if (settings.waterHeaterMaxTemp) {
-            html += `<div>Макс. температура: ${settings.waterHeaterMaxTemp}°C</div>`;
+            html += `<div>Макс. температура: <span id="water-temp-value">${settings.waterHeaterMaxTemp}°C</span></div>`;
+            html += `<input type="range" id="water-temp-slider" min="20" max="40" value="${settings.waterHeaterMaxTemp}">`;
         }
         html += '</div>';
     }
@@ -966,7 +908,7 @@ function parseAndDisplaySettings(data) {
     }
     html += '</div>';
     
-    // Добавляем кнопку "Сохранить все"
+    // Кнопки управления
     html += `
         <div style="display: flex; gap: 10px; margin-top: 20px;">
             <button id="save-all-settings" class="connect-btn" style="background: #4caf50; flex: 2;">💾 Сохранить все настройки</button>
@@ -976,58 +918,57 @@ function parseAndDisplaySettings(data) {
     
     element.innerHTML = html;
     
-    // Добавляем обработчики
     setupSettingsHandlers(settings);
 }
-// Временное хранилище измененных настроек
-let pendingSettings = {};
 
-/**
- * Настройка обработчиков для элементов настроек
- */
 function setupSettingsHandlers(initialSettings) {
-    // Кнопка сохранения всех настроек
     const saveBtn = document.getElementById('save-all-settings');
     if (saveBtn) {
         saveBtn.onclick = () => saveAllSettings();
     }
     
-    // Кнопка обновления (чтения настроек с устройства)
     const refreshBtn = document.getElementById('refresh-settings');
     if (refreshBtn) {
         refreshBtn.onclick = () => requestInitialData();
     }
     
-    // Слайдер целевой влажности
     const humSlider = document.getElementById('target-hum-slider');
     if (humSlider) {
         humSlider.addEventListener('input', (e) => {
             document.getElementById('target-hum-value').textContent = e.target.value + '%';
-            // Сохраняем в pending, но не отправляем
             pendingSettings.targetHumidity = e.target.value;
         });
     }
     
-    // Можно добавить другие элементы управления
+    const lockSlider = document.getElementById('lock-hold-slider');
+    if (lockSlider) {
+        lockSlider.addEventListener('input', (e) => {
+            document.getElementById('lock-hold-value').textContent = e.target.value + ' мс';
+            pendingSettings.lockHoldTime = e.target.value;
+        });
+    }
+    
+    const waterSlider = document.getElementById('water-temp-slider');
+    if (waterSlider) {
+        waterSlider.addEventListener('input', (e) => {
+            document.getElementById('water-temp-value').textContent = e.target.value + '°C';
+            pendingSettings.waterHeaterMaxTemp = e.target.value;
+        });
+    }
 }
 
-/**
- * Сохранение всех настроек одним пакетом
- */
 async function saveAllSettings() {
     if (!characteristics.allSettings) {
         log('❌ Характеристика allSettings не найдена', 'error');
         return;
     }
     
-    // Если нет ожидающих изменений, выходим
     if (Object.keys(pendingSettings).length === 0) {
         log('ℹ️ Нет изменений для сохранения');
         return;
     }
     
     try {
-        // Формируем строку со всеми измененными настройками
         let settingsString = '';
         for (const [key, value] of Object.entries(pendingSettings)) {
             if (settingsString.length > 0) settingsString += ',';
@@ -1036,17 +977,13 @@ async function saveAllSettings() {
         
         log(`📤 Сохранение настроек: ${settingsString}`);
         
-        // Отправляем одним пакетом
         const encoder = new TextEncoder();
         await characteristics.allSettings.writeValue(encoder.encode(settingsString));
         
-        // Очищаем pending
         pendingSettings = {};
         
-        // Показываем сообщение об успехе
         showNotification('✅ Настройки сохранены');
         
-        // Обновляем отображение (читаем свежие настройки)
         setTimeout(() => requestInitialData(), 500);
         
     } catch (error) {
@@ -1055,11 +992,7 @@ async function saveAllSettings() {
     }
 }
 
-/**
- * Показ временного уведомления
- */
 function showNotification(message, type = 'success') {
-    // Создаем или находим элемент уведомления
     let notification = document.getElementById('settings-notification');
     if (!notification) {
         notification = document.createElement('div');
@@ -1083,7 +1016,6 @@ function showNotification(message, type = 'success') {
     notification.textContent = message;
     notification.style.opacity = '1';
     
-    // Скрываем через 3 секунды
     setTimeout(() => {
         notification.style.opacity = '0';
     }, 3000);
