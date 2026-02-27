@@ -365,6 +365,22 @@ async function connectToDevice() {
         log('✅ Сервис найден');
         
         await discoverCharacteristics();
+
+        // Добавьте принудительную проверку K10
+        if (characteristics.k10) {
+            log('✅ K10 характеристика доступна');
+            // Попробуем прочитать статус
+            try {
+                const value = await characteristics.k10.readValue();
+                const decoder = new TextDecoder('utf-8');
+                const data = decoder.decode(value);
+                log(`📥 K10 начальный статус: ${data}`);
+            } catch (e) {
+                log(`⚠️ Не удалось прочитать K10: ${e.message}`, 'warning');
+            }
+        } else {
+            log('❌ K10 характеристика НЕ найдена!', 'error');
+        }
         await subscribeToNotifications();
         
         updateStatus('✅ Подключено', 'connected');
@@ -405,17 +421,50 @@ async function discoverCharacteristics() {
         { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },
         { name: 'allSettings', uuid: BLE_CHAR_ALL_SETTINGS_UUID },
         { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID },
-        { name: 'k10', uuid: BLE_CHAR_K10_UUID } // ВАЖНО!
+        { name: 'k10', uuid: BLE_CHAR_K10_UUID }
     ];
     
-    for (const char of charUUIDs) {
-        try {
-            log(`  - Поиск ${char.name}...`);
-            characteristics[char.name] = await service.getCharacteristic(char.uuid);
-            log(`    ✅ ${char.name} найден`);
-        } catch (e) {
-            log(`    ⚠️ ${char.name} не найден: ${e.message}`, 'warning');
+    // Сначала пробуем получить все характеристики одним запросом
+    try {
+        log('  - Попытка получить все характеристики...');
+        const allCharacteristics = await service.getCharacteristics();
+        log(`  ✅ Найдено характеристик: ${allCharacteristics.length}`);
+        
+        // Сопоставляем по UUID
+        for (const char of allCharacteristics) {
+            const uuid = char.uuid.toUpperCase();
+            log(`    Найдена характеристика с UUID: ${uuid}`);
+            
+            for (const target of charUUIDs) {
+                if (uuid.includes(target.uuid.toUpperCase().replace(/-/g, '')) || 
+                    uuid === target.uuid.toUpperCase()) {
+                    characteristics[target.name] = char;
+                    log(`    ✅ ${target.name} сопоставлена`);
+                }
+            }
         }
+    } catch (e) {
+        log(`  ⚠️ Не удалось получить все характеристики: ${e.message}`, 'warning');
+        
+        // Если не получилось, пробуем по одной
+        for (const char of charUUIDs) {
+            try {
+                log(`  - Поиск ${char.name}...`);
+                characteristics[char.name] = await service.getCharacteristic(char.uuid);
+                log(`    ✅ ${char.name} найден`);
+            } catch (e) {
+                log(`    ⚠️ ${char.name} не найден: ${e.message}`, 'warning');
+            }
+        }
+    }
+    
+    // Проверяем, что K10 найден
+    if (characteristics.k10) {
+        log('✅ K10 характеристика успешно найдена!');
+    } else {
+        log('❌ K10 характеристика НЕ найдена!', 'error');
+        log('   UUID в Arduino: beb5483e-36e1-4688-b7f5-ea07361b26a6', 'error');
+        log('   UUID в JS: ' + BLE_CHAR_K10_UUID, 'error');
     }
 }
 
