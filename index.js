@@ -548,9 +548,6 @@ function createK10Section() {
     
     // Добавляем обработчики событий
     setupK10Button();
-    
-    // Запрашиваем начальный статус
-    requestK10Status();
 }
 
 /**
@@ -562,7 +559,7 @@ function setupK10Button() {
     
     let pressTimer = null;
     let isPressed = false;
-    const holdTimeMs = 1000; // Время удержания (можно будет получать из настроек)
+    const holdTimeMs = 1000; // Время удержания
     
     // Функция для отправки команды K10
     async function sendK10Command(command) {
@@ -590,7 +587,7 @@ function setupK10Button() {
         }
     }
     
-    // Обработчик нажатия (touch start для мобильных, mouse down для десктопа)
+    // Обработчик нажатия
     k10Button.addEventListener('mousedown', startPress);
     k10Button.addEventListener('touchstart', (e) => {
         e.preventDefault();
@@ -613,24 +610,17 @@ function setupK10Button() {
         if (isPressed) return;
         isPressed = true;
         
-        // Отправляем команду нажатия
         sendK10Command('PRESS');
-        
-        // Обновляем текст кнопки
         document.getElementById('k10-button-text').textContent = 'Удерживайте...';
         
-        // Устанавливаем таймер для активации замка
         pressTimer = setTimeout(async () => {
             if (isPressed) {
-                // Отправляем команду активации замка
                 await sendK10Command('ACTIVATE');
                 document.getElementById('k10-button-text').textContent = 'Замок активирован!';
                 
-                // Показываем индикатор
                 const lockIndicator = document.getElementById('lock-active-indicator');
                 if (lockIndicator) lockIndicator.style.display = 'flex';
                 
-                // Меняем иконку
                 document.getElementById('lock-status-icon').textContent = '🔒';
             }
         }, holdTimeMs);
@@ -639,16 +629,12 @@ function setupK10Button() {
     function releasePress(e) {
         if (!isPressed) return;
         
-        // Очищаем таймер
         if (pressTimer) {
             clearTimeout(pressTimer);
             pressTimer = null;
         }
         
-        // Отправляем команду отпускания
         sendK10Command('RELEASE');
-        
-        // Возвращаем исходный текст
         document.getElementById('k10-button-text').textContent = 'Удерживайте для активации замка';
         k10Button.classList.remove('pressed');
         
@@ -678,7 +664,6 @@ async function requestK10Status() {
  * Парсинг статуса K10
  */
 function parseK10Status(data) {
-    // Ожидаемый формат: "LOCK:active|inactive,DOOR:open|closed,HOLD:XXX"
     const parts = data.split(',');
     
     parts.forEach(part => {
