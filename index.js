@@ -85,7 +85,7 @@ function initializeSettingDefinitions() {
         { key: 'resourceCheckDiff', label: 'Порог разницы ресурсов', type: 'number', min: 1, max: 20, step: 1, unit: '%' },
         { key: 'humidityHysteresis', label: 'Гистерезис влажности', type: 'number', min: 0.1, max: 5.0, step: 0.1, unit: '%', float: true },
         { key: 'resourceLowFaultThreshold', label: 'Порог "Мало ресурсов"', type: 'number', min: 1, max: 10, step: 1 },
-        { key: 'emptyFaultThreshold', label: 'Порог "Нет ресурсов"', type: 'number', min: 1, max: 20, step: 1 },
+        { key: 'resourceEmptyFaultThreshold', label: 'Порог "Нет ресурсов"', type: 'number', min: 1, max: 20, step: 1 }, // <-- ИСПРАВЛЕНО
         
         // --- Калибровка DHT ---
         { key: 'tempOffsetTop', label: 'Смещение темп. (верх.)', type: 'number', min: -20, max: 20, step: 1, unit: '°C' },
