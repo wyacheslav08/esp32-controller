@@ -10,6 +10,7 @@ const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
 const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
 const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
+const BLE_CHAR_COMMAND_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a7";
 
 // Глобальные переменные
 let bluetoothDevice = null;
@@ -483,6 +484,16 @@ async function connectToDevice() {
 async function discoverCharacteristics() {
     log('Поиск характеристик...');
     
+    const charUUIDs = [
+        { name: 'targetHum', uuid: BLE_CHAR_TARGET_HUM_UUID },
+        { name: 'currentTemp', uuid: BLE_CHAR_CURRENT_TEMP_UUID },
+        { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },
+        { name: 'allSettings', uuid: BLE_CHAR_ALL_SETTINGS_UUID },
+        { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID },
+        { name: 'k10', uuid: BLE_CHAR_K10_UUID },
+        { name: 'command', uuid: BLE_CHAR_COMMAND_UUID } // ← ВОТ СЮДА ДОБАВИТЬ!
+    ];
+    
     try {
         const characteristics_list = await service.getCharacteristics();
         log(`Найдено характеристик: ${characteristics_list.length}`);
@@ -511,6 +522,9 @@ async function discoverCharacteristics() {
             } else if (uuid.includes(BLE_CHAR_K10_UUID.toLowerCase())) {
                 characteristics.k10 = char;
                 log('    ✅ K10 НАЙДЕН!');
+            } else if (uuid.includes(BLE_CHAR_COMMAND_UUID.toLowerCase())) { // ← И СЮДА ДОБАВИТЬ!
+                characteristics.command = char;
+                log('    ✅ command');
             }
         }
     } catch (e) {
@@ -521,6 +535,10 @@ async function discoverCharacteristics() {
         log('🎉 K10 успешно найден и готов к работе!');
     } else {
         log('❌ K10 не найден!', 'error');
+    }
+    
+    if (characteristics.command) {
+        log('📝 Характеристика команд найдена');
     }
 }
 
@@ -765,6 +783,7 @@ function setupK10Button() {
     
     let pressTimer = null;
     let isPressed = false;
+    let currentHoldTime = 1000; // По умолчанию
     
     async function sendK10Command(command) {
         if (!characteristics.k10) {
@@ -790,6 +809,15 @@ function setupK10Button() {
         }
     }
     
+    // Функция обновления времени удержания
+    window.updateHoldTime = function(timeMs) {
+        currentHoldTime = timeMs;
+        const holdTimeElement = document.getElementById('hold-time');
+        if (holdTimeElement) {
+            holdTimeElement.textContent = timeMs + ' мс';
+        }
+    };
+    
     k10Button.addEventListener('mousedown', startPress);
     k10Button.addEventListener('touchstart', (e) => {
         e.preventDefault();
@@ -814,8 +842,6 @@ function setupK10Button() {
         sendK10Command('PRESS');
         document.getElementById('k10-button-text').textContent = 'Удерживайте...';
         
-        const holdTimeMs = 1000;
-        
         pressTimer = setTimeout(async () => {
             if (isPressed) {
                 await sendK10Command('ACTIVATE');
@@ -826,7 +852,7 @@ function setupK10Button() {
                 
                 document.getElementById('lock-status-icon').textContent = '🔒';
             }
-        }, holdTimeMs);
+        }, currentHoldTime);
     }
     
     function releasePress(e) {
@@ -843,6 +869,24 @@ function setupK10Button() {
         
         isPressed = false;
     }
+}
+
+// Обновленная parseK10Status
+function parseK10Status(data) {
+    const parts = data.split(',');
+    
+    parts.forEach(part => {
+        if (part.startsWith('LOCK:')) {
+            updateLockStatus(part.substring(5));
+        } else if (part.startsWith('DOOR:')) {
+            updateDoorStatus(part.substring(5));
+        } else if (part.startsWith('HOLD:')) {
+            const holdTime = parseInt(part.substring(5));
+            if (window.updateHoldTime) {
+                window.updateHoldTime(holdTime);
+            }
+        }
+    });
 }
 
 async function requestK10Status() {
@@ -1062,6 +1106,52 @@ function parseAndDisplaySettings(data) {
         }
     });
     html += '</div>';
+
+    // ========== ПЛАНОВАЯ ПЕРЕЗАГРУЗКА ==========
+    html += '<div class="settings-group"><h3>🔄 Плановая перезагрузка</h3>';
+
+    if (settings.autoRebootEnabled !== undefined) {
+        const isEnabled = settings.autoRebootEnabled === '1';
+        html += `
+            <div class="setting-item checkbox">
+                <label>
+                    <input type="checkbox" id="autoRebootEnabled" ${isEnabled ? 'checked' : ''}>
+                    Включить авто-перезагрузку
+                </label>
+                <span class="status-indicator ${isEnabled ? 'status-on' : 'status-off'}">
+                    ${isEnabled ? 'ВКЛ' : 'ВЫКЛ'}
+                </span>
+            </div>
+        `;
+    }
+
+    if (settings.autoRebootHour !== undefined) {
+        html += `
+            <div class="setting-item">
+                <label>🕐 Час перезагрузки: <span id="autoRebootHour-value">${settings.autoRebootHour}</span></label>
+                <input type="range" id="autoRebootHour-slider" min="0" max="23" value="${settings.autoRebootHour}">
+            </div>
+        `;
+    }
+
+    if (settings.autoRebootMinute !== undefined) {
+        html += `
+            <div class="setting-item">
+                <label>⏱️ Минута перезагрузки: <span id="autoRebootMinute-value">${settings.autoRebootMinute}</span></label>
+                <input type="range" id="autoRebootMinute-slider" min="0" max="59" value="${settings.autoRebootMinute}">
+            </div>
+        `;
+    }
+
+    if (settings.autoRebootDays !== undefined) {
+        html += `
+            <div class="setting-item">
+                <label>📅 Интервал (дни): <span id="autoRebootDays-value">${settings.autoRebootDays}</span></label>
+                <input type="range" id="autoRebootDays-slider" min="1" max="30" value="${settings.autoRebootDays}">
+            </div>
+        `;
+    }
+    html += '</div>';
     
     // ========== ЛОГИКА ВЛАЖНОСТИ ==========
     html += '<div class="settings-group"><h3>💧 Логика влажности</h3>';
@@ -1175,10 +1265,15 @@ function setupSettingsHandlers(initialSettings) {
     
     const resetBtn = document.getElementById('reset-to-defaults');
     if (resetBtn) {
-        resetBtn.onclick = () => {
-            if (confirm('Сбросить все настройки к заводским?')) {
-                // TODO: Добавить отправку команды сброса
-                log('🔄 Запрос сброса настроек');
+        resetBtn.onclick = async () => {
+            if (confirm('⚠️ Сбросить все настройки к заводским?\nУстройство перезагрузится!')) {
+                showNotification('🔄 Сброс настроек...', 'info');
+                await sendCommand('RESET_TO_DEFAULTS');
+                // Ждем перезагрузки
+                setTimeout(() => {
+                    disconnectFromDevice();
+                    showNotification('✅ Устройство перезагружается', 'success');
+                }, 2000);
             }
         };
     }
@@ -1249,46 +1344,60 @@ function setupSettingsHandlers(initialSettings) {
             });
         }
     });
-}
 
-// Вспомогательная функция для обработки слайдеров
-function setupRangeHandler(sliderId, valueId, settingsKey, unit, multiplier = 1) {
-    const slider = document.getElementById(sliderId);
-    const valueSpan = document.getElementById(valueId);
-    
-    if (slider && valueSpan) {
-        slider.addEventListener('input', (e) => {
-            let val = parseFloat(e.target.value);
-            if (multiplier !== 1) {
-                valueSpan.textContent = val.toFixed(1) + unit;
-                pendingSettings[settingsKey] = Math.round(val * multiplier);
-            } else {
-                valueSpan.textContent = val + unit;
-                pendingSettings[settingsKey] = val;
-            }
+    // Чекбокс авто-перезагрузки
+    const rebootCheckbox = document.getElementById('autoRebootEnabled');
+    if (rebootCheckbox) {
+        rebootCheckbox.addEventListener('change', (e) => {
+            pendingSettings.autoRebootEnabled = e.target.checked ? '1' : '0';
+            updateCheckboxStatus('autoRebootEnabled', e.target.checked);
         });
     }
-}
 
-// Обновление статуса чекбокса
-function updateCheckboxStatus(id, checked) {
-    const statusSpan = document.querySelector(`#${id}`).closest('.checkbox').querySelector('.status-indicator');
-    if (statusSpan) {
-        statusSpan.textContent = checked ? 'ВКЛ' : 'ВЫКЛ';
-        statusSpan.className = `status-indicator ${checked ? 'status-on' : 'status-off'}`;
+    // Слайдеры перезагрузки
+    setupRangeHandler('autoRebootHour-slider', 'autoRebootHour-value', 'autoRebootHour', '');
+    setupRangeHandler('autoRebootMinute-slider', 'autoRebootMinute-value', 'autoRebootMinute', '');
+    setupRangeHandler('autoRebootDays-slider', 'autoRebootDays-value', 'autoRebootDays', '');
     }
-}
 
-async function saveAllSettings() {
-    if (!characteristics.allSettings) {
-        log('❌ Характеристика allSettings не найдена', 'error');
-        return;
-    }
+    // Вспомогательная функция для обработки слайдеров
+    function setupRangeHandler(sliderId, valueId, settingsKey, unit, multiplier = 1) {
+        const slider = document.getElementById(sliderId);
+        const valueSpan = document.getElementById(valueId);
     
-    if (Object.keys(pendingSettings).length === 0) {
-        log('ℹ️ Нет изменений для сохранения');
-        return;
+        if (slider && valueSpan) {
+            slider.addEventListener('input', (e) => {
+                let val = parseFloat(e.target.value);
+                if (multiplier !== 1) {
+                    valueSpan.textContent = val.toFixed(1) + unit;
+                    pendingSettings[settingsKey] = Math.round(val * multiplier);
+                } else {
+                    valueSpan.textContent = val + unit;
+                    pendingSettings[settingsKey] = val;
+                }
+            });
+        }
     }
+
+    // Обновление статуса чекбокса
+    function updateCheckboxStatus(id, checked) {
+        const statusSpan = document.querySelector(`#${id}`).closest('.checkbox').querySelector('.status-indicator');
+        if (statusSpan) {
+            statusSpan.textContent = checked ? 'ВКЛ' : 'ВЫКЛ';
+            statusSpan.className = `status-indicator ${checked ? 'status-on' : 'status-off'}`;
+        }
+    }
+
+    async function saveAllSettings() {
+        if (!characteristics.allSettings) {
+            log('❌ Характеристика allSettings не найдена', 'error');
+            return;
+        }
+    
+        if (Object.keys(pendingSettings).length === 0) {
+            log('ℹ️ Нет изменений для сохранения');
+            return;
+        }
     
     try {
         // Фильтруем только изменяемые настройки (без статистики)
@@ -1298,7 +1407,8 @@ async function saveAllSettings() {
             'screenTimeoutOptionIndex', 'deadZonePercent', 'minHumidityChange', 'maxOperationDuration',
             'operationCooldown', 'maxSafeHumidity', 'resourceCheckDiff', 'hysteresis',
             'lowFaultThreshold', 'emptyFaultThreshold', 'tempOffsetTop', 'humOffsetTop',
-            'tempOffsetHum', 'humOffsetHum'
+            'tempOffsetHum', 'humOffsetHum', 'autoRebootEnabled', 'autoRebootHour',
+            'autoRebootMinute', 'autoRebootDays'
         ];
         
         let settingsString = '';
@@ -1358,4 +1468,21 @@ function showNotification(message, type = 'success') {
     setTimeout(() => {
         notification.style.opacity = '0';
     }, 3000);
+}
+
+async function sendCommand(command) {
+    if (!characteristics.command) {
+        log('❌ Характеристика команд не найдена', 'error');
+        return false;
+    }
+    
+    try {
+        const encoder = new TextEncoder();
+        await characteristics.command.writeValue(encoder.encode(command));
+        log(`📤 Команда: ${command}`, 'success');
+        return true;
+    } catch (error) {
+        log(`❌ Ошибка отправки команды: ${error.message}`, 'error');
+        return false;
+    }
 }
