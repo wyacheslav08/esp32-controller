@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С ОПРОСОМ
+// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С ПРАВИЛЬНЫМ ДЕКОДИРОВАНИЕМ
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -50,24 +50,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function addStyles() {
     const styles = `
-        .sensor-card { background: #f8f9fa; border-radius: 10px; padding: 15px; margin: 10px 0; text-align: center; }
+        .sensor-card { background: #f8f9fa; border-radius: 10px; padding: 15px; margin: 10px 0; text-align: center; border: 1px solid #e0e0e0; }
+        .sensor-label { font-size: 14px; color: #666; margin-bottom: 5px; }
         .sensor-value { font-size: 32px; font-weight: bold; color: #333; }
         .connect-btn { background: #2196f3; color: white; border: none; padding: 12px 24px; border-radius: 25px; font-size: 16px; cursor: pointer; width: 100%; margin: 20px 0; }
         .connect-btn.connected { background: #f44336; }
         .debug-panel { background: #1e1e1e; color: #00ff00; padding: 10px; border-radius: 5px; margin-top: 20px; max-height: 200px; overflow-y: auto; font-size: 12px; }
         .log-entry { margin: 2px 0; border-bottom: 1px solid #333; }
-        .k10-section { margin-top: 20px; padding: 15px; background: #fff3e0; border-radius: 10px; }
-        .k10-button { background: #ff9800; color: white; border: none; padding: 15px; border-radius: 50px; font-size: 18px; width: 100%; cursor: pointer; }
+        .k10-section { margin-top: 20px; padding: 15px; background: #fff3e0; border-radius: 10px; border: 1px solid #ffe0b2; }
+        .k10-button { background: #ff9800; color: white; border: none; padding: 15px; border-radius: 50px; font-size: 18px; width: 100%; cursor: pointer; margin: 10px 0; }
         .k10-button:active { background: #e65100; }
+        .k10-status { margin-top: 10px; padding: 10px; background: #ffe0b2; border-radius: 8px; }
+        .door-closed { background: #c8e6c9; color: #2e7d32; padding: 3px 8px; border-radius: 4px; }
+        .door-open { background: #ffcdd2; color: #c62828; padding: 3px 8px; border-radius: 4px; }
         .status-on { color: #4caf50; font-weight: bold; }
         .status-off { color: #f44336; font-weight: bold; }
+        .lock-active { background: #ffeb3b; padding: 5px; text-align: center; border-radius: 4px; animation: blink 1s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .settings-card { background: white; border-radius: 10px; padding: 15px; margin-top: 20px; border: 1px solid #e0e0e0; }
         .settings-group { background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
-        .setting-item { margin: 15px 0; padding: 10px; background: white; border-radius: 8px; }
+        .settings-group h3 { margin: 0 0 15px 0; color: #2196f3; border-bottom: 1px solid #e0e0e0; padding-bottom: 5px; }
+        .setting-item { margin: 10px 0; padding: 10px; background: white; border-radius: 8px; }
         .button-group { display: flex; gap: 10px; margin-top: 20px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; }
         .btn-primary { background: #4caf50; color: white; }
         .btn-secondary { background: #2196f3; color: white; }
-        .btn-danger { background: #f44336; color: white; }
     `;
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
@@ -131,6 +138,9 @@ async function connectToDevice() {
         connectButton.classList.add('connected');
         connectButton.disabled = false;
         
+        // Создаем интерфейс
+        createK10Section();
+        
         // Запускаем опрос данных
         startPolling();
         
@@ -157,7 +167,8 @@ async function findCharacteristics() {
     
     for (let char of chars) {
         const uuid = char.uuid.toLowerCase();
-        log(`  UUID: ${uuid.substring(0, 8)}...${uuid.substring(28)}`);
+        const shortUuid = uuid.substring(4, 8) + '...' + uuid.substring(28);
+        log(`  UUID: ${shortUuid}`);
         
         if (uuid.includes('26a1')) characteristics.targetHum = char;
         else if (uuid.includes('26a2')) characteristics.currentTemp = char;
@@ -176,23 +187,12 @@ async function findCharacteristics() {
 // =========================================================================
 
 async function loadAllData() {
-    // Загружаем настройки
-    if (characteristics.allSettings) {
-        try {
-            const value = await characteristics.allSettings.readValue();
-            const data = new TextDecoder().decode(value);
-            log('📥 Настройки получены');
-            parseAndDisplaySettings(data);
-        } catch (e) {
-            log(`❌ Ошибка чтения настроек: ${e.message}`, 'error');
-        }
-    }
-    
     // Загружаем температуру
     if (characteristics.currentTemp) {
         try {
             const value = await characteristics.currentTemp.readValue();
-            const data = new TextDecoder().decode(value);
+            const data = decodeValue(value);
+            log(`🌡️ Temp: ${data}`);
             updateTempDisplay(data);
         } catch (e) {}
     }
@@ -201,8 +201,20 @@ async function loadAllData() {
     if (characteristics.currentHum) {
         try {
             const value = await characteristics.currentHum.readValue();
-            const data = new TextDecoder().decode(value);
+            const data = decodeValue(value);
+            log(`💧 Hum: ${data}`);
             updateHumDisplay(data);
+        } catch (e) {}
+    }
+    
+    // Загружаем эффективность
+    if (characteristics.sysInfo) {
+        try {
+            const value = await characteristics.sysInfo.readValue();
+            const data = decodeValue(value);
+            if (data.startsWith('E:')) {
+                updateEfficiencyDisplay(data);
+            }
         } catch (e) {}
     }
     
@@ -210,9 +222,52 @@ async function loadAllData() {
     if (characteristics.k10) {
         try {
             const value = await characteristics.k10.readValue();
-            const data = new TextDecoder().decode(value);
+            const data = decodeValue(value);
+            log(`🔒 K10: ${data}`);
             parseK10Status(data);
         } catch (e) {}
+    }
+    
+    // Загружаем настройки
+    if (characteristics.allSettings) {
+        try {
+            const value = await characteristics.allSettings.readValue();
+            const data = decodeValue(value);
+            log(`⚙️ Settings: ${data.substring(0, 50)}...`);
+            parseAndDisplaySettings(data);
+        } catch (e) {
+            log(`❌ Ошибка чтения настроек: ${e.message}`, 'error');
+        }
+    }
+}
+
+// =========================================================================
+// Правильное декодирование данных
+// =========================================================================
+
+function decodeValue(value) {
+    // Пробуем разные способы декодирования
+    try {
+        // Сначала пробуем как UTF-8 строку
+        const decoder = new TextDecoder('utf-8');
+        let str = decoder.decode(value);
+        
+        // Проверяем, не бинарные ли это данные
+        if (str.charCodeAt(0) > 127) {
+            // Если первый символ не ASCII, возможно это бинарные данные
+            // Пробуем интерпретировать как float
+            const floatVal = value.getFloat32(0, true);
+            if (!isNaN(floatVal)) {
+                return floatVal.toString();
+            }
+        }
+        
+        // Очищаем строку от непечатных символов
+        str = str.replace(/[^\x20-\x7E]/g, '');
+        return str;
+    } catch (e) {
+        // Если не получилось, возвращаем как есть
+        return value.toString();
     }
 }
 
@@ -230,8 +285,8 @@ function startPolling() {
         if (characteristics.currentTemp) {
             try {
                 const value = await characteristics.currentTemp.readValue();
-                const data = new TextDecoder().decode(value);
-                updateTempDisplay(data);
+                const data = decodeValue(value);
+                if (data) updateTempDisplay(data);
             } catch (e) {}
         }
         
@@ -239,8 +294,17 @@ function startPolling() {
         if (characteristics.currentHum) {
             try {
                 const value = await characteristics.currentHum.readValue();
-                const data = new TextDecoder().decode(value);
-                updateHumDisplay(data);
+                const data = decodeValue(value);
+                if (data) updateHumDisplay(data);
+            } catch (e) {}
+        }
+        
+        // Читаем эффективность
+        if (characteristics.sysInfo) {
+            try {
+                const value = await characteristics.sysInfo.readValue();
+                const data = decodeValue(value);
+                if (data && data.startsWith('E:')) updateEfficiencyDisplay(data);
             } catch (e) {}
         }
         
@@ -248,12 +312,12 @@ function startPolling() {
         if (characteristics.k10) {
             try {
                 const value = await characteristics.k10.readValue();
-                const data = new TextDecoder().decode(value);
-                parseK10Status(data);
+                const data = decodeValue(value);
+                if (data) parseK10Status(data);
             } catch (e) {}
         }
         
-    }, 3000); // Каждые 3 секунды
+    }, 3000);
 }
 
 // =========================================================================
@@ -268,8 +332,18 @@ function updateTempDisplay(data) {
         el.className = 'sensor-card';
         document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
     }
-    const value = data.startsWith('T:') ? data.substring(2) : data;
-    el.innerHTML = `<div>🌡️ Температура</div><div class="sensor-value">${value}°C</div>`;
+    
+    // Извлекаем число из строки
+    let value = data;
+    if (data.startsWith('T:')) value = data.substring(2);
+    
+    // Оставляем только цифры и точку
+    value = value.replace(/[^\d.-]/g, '');
+    
+    el.innerHTML = `
+        <div class="sensor-label">🌡️ Температура</div>
+        <div class="sensor-value">${value || '--'}°C</div>
+    `;
 }
 
 function updateHumDisplay(data) {
@@ -279,11 +353,21 @@ function updateHumDisplay(data) {
         el.id = 'hum-display';
         el.className = 'sensor-card';
         const tempEl = document.getElementById('temp-display');
-        tempEl ? tempEl.parentNode.insertBefore(el, tempEl.nextSibling) : 
-                 document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
+        if (tempEl) {
+            tempEl.parentNode.insertBefore(el, tempEl.nextSibling);
+        } else {
+            document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
+        }
     }
-    const value = data.startsWith('H:') ? data.substring(2) : data;
-    el.innerHTML = `<div>💧 Влажность</div><div class="sensor-value">${value}%</div>`;
+    
+    let value = data;
+    if (data.startsWith('H:')) value = data.substring(2);
+    value = value.replace(/[^\d.-]/g, '');
+    
+    el.innerHTML = `
+        <div class="sensor-label">💧 Влажность</div>
+        <div class="sensor-value">${value || '--'}%</div>
+    `;
 }
 
 function updateEfficiencyDisplay(data) {
@@ -293,11 +377,21 @@ function updateEfficiencyDisplay(data) {
         el.id = 'eff-display';
         el.className = 'sensor-card';
         const humEl = document.getElementById('hum-display');
-        humEl ? humEl.parentNode.insertBefore(el, humEl.nextSibling) :
-                document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
+        if (humEl) {
+            humEl.parentNode.insertBefore(el, humEl.nextSibling);
+        } else {
+            document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
+        }
     }
-    const value = data.startsWith('E:') ? data.substring(2) : data;
-    el.innerHTML = `<div>⚡ Эффективность</div><div class="sensor-value">${value}%/мин</div>`;
+    
+    let value = data;
+    if (data.startsWith('E:')) value = data.substring(2);
+    value = value.replace(/[^\d.-]/g, '');
+    
+    el.innerHTML = `
+        <div class="sensor-label">⚡ Эффективность</div>
+        <div class="sensor-value">${value || '--'}%/мин</div>
+    `;
 }
 
 // =========================================================================
@@ -314,9 +408,9 @@ function createK10Section() {
     section.innerHTML = `
         <h3>🔒 K10 - Магнитный замок <span id="lock-icon">🔓</span></h3>
         <button id="k10-button" class="k10-button">🔒 Удерживайте для активации</button>
-        <div style="margin-top:10px;" id="door-status">🚪 Состояние двери: ...</div>
-        <div id="hold-time">⏱️ Время удержания: 1000 мс</div>
-        <div id="lock-active" style="display:none; background:#ffeb3b; padding:5px; margin-top:10px; text-align:center;">🔐 ЗАМОК АКТИВИРОВАН</div>
+        <div class="k10-status" id="door-status">🚪 Состояние двери: <span>...</span></div>
+        <div class="k10-status" id="hold-time">⏱️ Время удержания: 1000 мс</div>
+        <div id="lock-active" style="display:none;" class="lock-active">🔐 ЗАМОК АКТИВИРОВАН</div>
     `;
     container.appendChild(section);
     
@@ -334,11 +428,23 @@ function setupK10Button() {
     button.addEventListener('mousedown', startPress);
     button.addEventListener('mouseup', releasePress);
     button.addEventListener('mouseleave', releasePress);
+    button.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        startPress();
+    });
+    button.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        releasePress();
+    });
     
     async function sendK10Command(cmd) {
-        if (!characteristics.k10) return;
+        if (!characteristics.k10) {
+            log('❌ K10 характеристика не найдена', 'error');
+            return;
+        }
         try {
-            await characteristics.k10.writeValue(new TextEncoder().encode(cmd));
+            const encoder = new TextEncoder();
+            await characteristics.k10.writeValue(encoder.encode(cmd));
             log(`📤 K10: ${cmd}`);
         } catch (e) {
             log(`❌ K10 ошибка: ${e.message}`, 'error');
@@ -366,6 +472,7 @@ function setupK10Button() {
         clearTimeout(pressTimer);
         sendK10Command('RELEASE');
         button.textContent = '🔒 Удерживайте для активации';
+        document.getElementById('lock-active').style.display = 'none';
         isPressed = false;
     }
 }
@@ -382,11 +489,20 @@ function parseK10Status(data) {
         }
         else if (part.startsWith('DOOR:')) {
             const isOpen = part.substring(5) === 'open';
-            document.getElementById('door-status').innerHTML = `🚪 Состояние двери: <span class="${isOpen ? 'door-open' : 'door-closed'}">${isOpen ? 'Открыта' : 'Закрыта'}</span>`;
+            const doorSpan = document.querySelector('#door-status span');
+            if (doorSpan) {
+                doorSpan.textContent = isOpen ? 'Открыта' : 'Закрыта';
+                doorSpan.className = isOpen ? 'door-open' : 'door-closed';
+            }
         }
         else if (part.startsWith('HOLD:')) {
             const time = part.substring(5);
-            document.getElementById('hold-time').textContent = `⏱️ Время удержания: ${time} мс`;
+            document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${time} мс`;
+            // Обновляем время для кнопки
+            const button = document.getElementById('k10-button');
+            if (button) {
+                button.setAttribute('data-hold-time', time);
+            }
         }
     });
 }
@@ -410,52 +526,112 @@ function parseAndDisplaySettings(data) {
         if (k && v) settings[k.trim()] = v.trim();
     });
     
-    let html = '<h2>⚙️ Настройки</h2>';
+    let html = '<h2>⚙️ Настройки системы</h2>';
     
     // Основные
     html += '<div class="settings-group"><h3>🎯 Основные</h3>';
     if (settings.targetHumidity) {
-        html += `<div class="setting-item">🌡️ Целевая влажность: ${settings.targetHumidity}%</div>`;
+        html += `<div class="setting-item">🌡️ Целевая влажность: <strong>${settings.targetHumidity}%</strong></div>`;
     }
     if (settings.lockHoldTime) {
-        html += `<div class="setting-item">🔒 Время удержания: ${settings.lockHoldTime} мс</div>`;
+        html += `<div class="setting-item">🔒 Время удержания: <strong>${settings.lockHoldTime} мс</strong></div>`;
     }
     html += '</div>';
     
     // Звук
-    html += '<div class="settings-group"><h3>🔊 Звук</h3>';
-    if (settings.doorSoundEnabled) {
-        html += `<div class="setting-item">🚪 Дверь: <span class="${settings.doorSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.doorSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
+    html += '<div class="settings-group"><h3>🔊 Звуковые оповещения</h3>';
+    if (settings.doorSoundEnabled !== undefined) {
+        const enabled = settings.doorSoundEnabled === '1';
+        html += `<div class="setting-item">🚪 Дверь: <span class="${enabled ? 'status-on' : 'status-off'}">${enabled ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
     }
-    if (settings.waterSilicaSoundEnabled) {
-        html += `<div class="setting-item">💧 Ресурсы: <span class="${settings.waterSilicaSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterSilicaSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
+    if (settings.waterSilicaSoundEnabled !== undefined) {
+        const enabled = settings.waterSilicaSoundEnabled === '1';
+        html += `<div class="setting-item">💧 Ресурсы: <span class="${enabled ? 'status-on' : 'status-off'}">${enabled ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
     }
     html += '</div>';
     
     // Подогрев
-    if (settings.waterHeaterEnabled) {
-        html += '<div class="settings-group"><h3>💧 Подогрев</h3>';
-        html += `<div class="setting-item">Статус: <span class="${settings.waterHeaterEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterHeaterEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
-        if (settings.waterHeaterMaxTemp) {
-            html += `<div class="setting-item">Макс. температура: ${settings.waterHeaterMaxTemp}°C</div>`;
-        }
-        html += '</div>';
+    html += '<div class="settings-group"><h3>💧 Подогрев воды</h3>';
+    if (settings.waterHeaterEnabled !== undefined) {
+        const enabled = settings.waterHeaterEnabled === '1';
+        html += `<div class="setting-item">⚡ Статус: <span class="${enabled ? 'status-on' : 'status-off'}">${enabled ? 'ВКЛ 🔥' : 'ВЫКЛ ❄️'}</span></div>`;
     }
+    if (settings.waterHeaterMaxTemp) {
+        html += `<div class="setting-item">🌡️ Макс. температура: <strong>${settings.waterHeaterMaxTemp}°C</strong></div>`;
+    }
+    html += '</div>';
+    
+    // Таймауты
+    html += '<div class="settings-group"><h3>⏱️ Таймауты</h3>';
+    const lockNames = ["ОТКЛ", "30 сек", "1 мин", "2 мин", "5 мин"];
+    if (settings.lockTimeIndex !== undefined) {
+        const idx = parseInt(settings.lockTimeIndex);
+        html += `<div class="setting-item">🔐 Блокировка: <strong>${lockNames[idx] || '?'}</strong></div>`;
+    }
+    const menuNames = ["ОТКЛ", "15 сек", "30 сек", "1 мин", "2 мин"];
+    if (settings.menuTimeoutOptionIndex !== undefined) {
+        const idx = parseInt(settings.menuTimeoutOptionIndex);
+        html += `<div class="setting-item">📱 Таймаут меню: <strong>${menuNames[idx] || '?'}</strong></div>`;
+    }
+    const screenNames = ["ОТКЛ", "30 сек", "1 мин", "5 мин", "10 мин"];
+    if (settings.screenTimeoutOptionIndex !== undefined) {
+        const idx = parseInt(settings.screenTimeoutOptionIndex);
+        html += `<div class="setting-item">🖥️ Таймаут экрана: <strong>${screenNames[idx] || '?'}</strong></div>`;
+    }
+    html += '</div>';
+    
+    // Логика влажности
+    html += '<div class="settings-group"><h3>💧 Логика влажности</h3>';
+    if (settings.deadZonePercent) {
+        html += `<div class="setting-item">📊 Мертвая зона: <strong>${parseFloat(settings.deadZonePercent).toFixed(1)}%</strong></div>`;
+    }
+    if (settings.minHumidityChange) {
+        html += `<div class="setting-item">📈 Мин. изменение: <strong>${parseFloat(settings.minHumidityChange).toFixed(1)}%</strong></div>`;
+    }
+    if (settings.maxOperationDuration) {
+        html += `<div class="setting-item">⏱️ Макс. время: <strong>${settings.maxOperationDuration} мин</strong></div>`;
+    }
+    if (settings.operationCooldown) {
+        html += `<div class="setting-item">😴 Отдых: <strong>${settings.operationCooldown} мин</strong></div>`;
+    }
+    if (settings.maxSafeHumidity) {
+        html += `<div class="setting-item">⚠️ Макс. безопасная: <strong>${settings.maxSafeHumidity}%</strong></div>`;
+    }
+    html += '</div>';
+    
+    // Калибровка
+    html += '<div class="settings-group"><h3>📏 Калибровка DHT</h3>';
+    if (settings.tempOffsetTop !== undefined) {
+        const val = parseInt(settings.tempOffsetTop);
+        html += `<div class="setting-item">🌡️ Температура верх: <strong>${val > 0 ? '+' : ''}${val}°C</strong></div>`;
+    }
+    if (settings.humOffsetTop !== undefined) {
+        const val = parseInt(settings.humOffsetTop);
+        html += `<div class="setting-item">💧 Влажность верх: <strong>${val > 0 ? '+' : ''}${val}%</strong></div>`;
+    }
+    if (settings.tempOffsetHum !== undefined) {
+        const val = parseInt(settings.tempOffsetHum);
+        html += `<div class="setting-item">🌡️ Температура увл: <strong>${val > 0 ? '+' : ''}${val}°C</strong></div>`;
+    }
+    if (settings.humOffsetHum !== undefined) {
+        const val = parseInt(settings.humOffsetHum);
+        html += `<div class="setting-item">💧 Влажность увл: <strong>${val > 0 ? '+' : ''}${val}%</strong></div>`;
+    }
+    html += '</div>';
     
     // Статистика
     html += '<div class="settings-group"><h3>📊 Статистика</h3>';
     if (settings.wdtResetCount) {
-        html += `<div class="setting-item">🔄 WDT сбросов: ${settings.wdtResetCount}</div>`;
+        html += `<div class="setting-item">🔄 WDT сбросов: <strong>${settings.wdtResetCount}</strong></div>`;
     }
     if (settings.rebootCounter) {
-        html += `<div class="setting-item">🔁 Перезагрузок: ${settings.rebootCounter}</div>`;
+        html += `<div class="setting-item">🔁 Перезагрузок: <strong>${settings.rebootCounter}</strong></div>`;
     }
     html += '</div>';
     
     // Кнопки
     html += `
         <div class="button-group">
-            <button id="save-settings" class="btn btn-primary">💾 Сохранить</button>
             <button id="refresh-settings" class="btn btn-secondary">🔄 Обновить</button>
         </div>
     `;
@@ -463,13 +639,6 @@ function parseAndDisplaySettings(data) {
     el.innerHTML = html;
     
     document.getElementById('refresh-settings').onclick = () => loadAllData();
-    document.getElementById('save-settings').onclick = () => saveSettings();
-}
-
-async function saveSettings() {
-    if (!characteristics.allSettings) return;
-    // Пока просто заглушка
-    log('ℹ️ Сохранение настроек будет позже');
 }
 
 // =========================================================================
