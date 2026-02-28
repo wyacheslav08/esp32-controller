@@ -554,19 +554,14 @@ async function subscribeToNotifications() {
         const char = characteristics[charName];
         if (char) {
             try {
-                // Проверяем, поддерживает ли характеристика уведомления
-                const properties = char.properties;
-                if (properties & 0x10) { // 0x10 = NOTIFY
-                    await char.startNotifications();
-                    
-                    char.addEventListener('characteristicvaluechanged', (event) => {
-                        handleNotification(charName, event.target.value);
-                    });
-                    
-                    log(`  ✅ ${charName} уведомления активированы`);
-                } else {
-                    log(`  ⚠️ ${charName} не поддерживает уведомления`, 'warning');
-                }
+                // Пробуем подписаться без проверки свойств
+                await char.startNotifications();
+                
+                char.addEventListener('characteristicvaluechanged', (event) => {
+                    handleNotification(charName, event.target.value);
+                });
+                
+                log(`  ✅ ${charName} уведомления активированы`);
             } catch (e) {
                 log(`  ❌ ${charName} уведомления не активированы: ${e.message}`, 'error');
             }
