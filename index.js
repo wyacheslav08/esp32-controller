@@ -78,13 +78,13 @@ function initializeSettingDefinitions() {
 
         // --- Логика влажности ---
         { key: 'deadZonePercent', label: 'Мертвая зона', type: 'number', min: 0.1, max: 10.0, step: 0.1, unit: '%', float: true },
-        { key: 'minHumidityChange', label: 'Мин. изменение H% (тайм.)', type: 'number', min: 0.1, max: 5.0, step: 0.1, unit: '%', float: true },
+        { key: 'minHumidityChangeForTimeout', label: 'Мин. изменение H% (тайм.)', type: 'number', min: 0.1, max: 5.0, step: 0.1, unit: '%', float: true },
         { key: 'maxOperationDuration', label: 'Макс. время работы', type: 'number', min: 1, max: 60, step: 1, unit: ' мин' },
         { key: 'operationCooldown', label: 'Время "отдыха"', type: 'number', min: 1, max: 30, step: 1, unit: ' мин' },
         { key: 'maxSafeHumidity', label: 'Макс. безопасная H%', type: 'number', min: 50, max: 100, step: 1, unit: '%' },
         { key: 'resourceCheckDiff', label: 'Порог разницы ресурсов', type: 'number', min: 1, max: 20, step: 1, unit: '%' },
         { key: 'humidityHysteresis', label: 'Гистерезис влажности', type: 'number', min: 0.1, max: 5.0, step: 0.1, unit: '%', float: true },
-        { key: 'lowFaultThreshold', label: 'Порог "Мало ресурсов"', type: 'number', min: 1, max: 10, step: 1 },
+        { key: 'resourceLowFaultThreshold', label: 'Порог "Мало ресурсов"', type: 'number', min: 1, max: 10, step: 1 },
         { key: 'emptyFaultThreshold', label: 'Порог "Нет ресурсов"', type: 'number', min: 1, max: 20, step: 1 },
         
         // --- Калибровка DHT ---
@@ -107,7 +107,6 @@ function initializeSettingDefinitions() {
         { key: 'lastRebootTimestamp', label: 'Время последней перезагрузки', type: 'readonly', timestamp: true } // Unix timestamp
     ];
 }
-
 /**
  * Добавляет стили CSS динамически к странице.
  * Это обеспечивает, что интерфейс выглядит правильно без отдельного файла CSS.
@@ -180,6 +179,7 @@ function addStyles() {
 
         .status-on { color: #4caf50; font-weight: bold; }
         .status-off { color: #f44336; font-weight: bold; }
+        .status-warning { color: #ff9800; font-weight: bold; }
     `;
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
@@ -336,6 +336,7 @@ async function findCharacteristics() {
 
     await safeStartNotify(characteristics.sysInfo, 'Система', parseSysInfo);
     await safeStartNotify(characteristics.k10, 'K10/Замок', parseK10Status);
+    
     await safeStartNotify(characteristics.allSettings, 'Настройки', parseAndDisplaySettings);
 
     log(`✅ Настройка уведомлений завершена`, 'success');
@@ -578,6 +579,8 @@ function parseSysInfo(data) {
     let silicaStatus = '';
     let humRelayStatus = '';
     let ventRelayStatus = '';
+    let waterHeaterStatus = ''; // ДОБАВЛЕНО
+    let whSafeShutdown = false; // ДОБАВЛЕНО
 
     const parts = data.split(',');
     parts.forEach(part => {
@@ -597,6 +600,10 @@ function parseSysInfo(data) {
             humRelayStatus = cleanValue;
         } else if (cleanKey === 'VENT_RELAY') {
             ventRelayStatus = cleanValue;
+        } else if (cleanKey === 'WATER_HEATER') { // ДОБАВЛЕНО
+            waterHeaterStatus = cleanValue;
+        } else if (cleanKey === 'WH_SAFE_SHUTDOWN') { // ДОБАВЛЕНО
+            whSafeShutdown = (cleanValue === '1');
         }
     });
 
@@ -618,10 +625,14 @@ function parseSysInfo(data) {
     }
 
     htmlContent += `<div style="font-size: 14px; margin-top: 10px; text-align: left; padding-left: 10px;">`;
-    htmlContent += `💧 Вода: <strong>${waterStatus || 'OK'}</strong><br>`;
-    htmlContent += `🍚 Силикагель: <strong>${silicaStatus || 'OK'}</strong><br>`;
-    htmlContent += `H% Реле: <strong>${humRelayStatus || 'OFF'}</strong><br>`;
-    htmlContent += `Вентилятор: <strong>${ventRelayStatus || 'OFF'}</strong>`;
+    htmlContent += `💧 Вода: <strong class="${waterStatus === 'EMPTY' ? 'status-off' : (waterStatus === 'LOW' ? 'status-warning' : 'status-on')}">${waterStatus || 'OK'}</strong><br>`; // Добавлены классы статусов
+    htmlContent += `🍚 Силикагель: <strong class="${silicaStatus === 'EMPTY' ? 'status-off' : (silicaStatus === 'LOW' ? 'status-warning' : 'status-on')}">${silicaStatus || 'OK'}</strong><br>`; // Добавлены классы статусов
+    htmlContent += `H% Реле: <strong class="${humRelayStatus === 'ON' ? 'status-on' : 'status-off'}">${humRelayStatus || 'OFF'}</strong><br>`;
+    htmlContent += `Вентилятор: <strong class="${ventRelayStatus === 'ON' ? 'status-on' : 'status-off'}">${ventRelayStatus || 'OFF'}</strong><br>`;
+    htmlContent += `Подогрев: <strong class="${waterHeaterStatus === 'ON' ? 'status-on' : 'status-off'}">${waterHeaterStatus || 'OFF'}</strong>`;
+    if (whSafeShutdown) { // Отображение предупреждения о безопасном отключении подогрева
+        htmlContent += ` <span style="color: #f44336; font-weight: bold;">(АВАРИЯ!)</span>`;
+    }
     htmlContent += `</div>`;
     
     el.innerHTML = htmlContent;
@@ -819,28 +830,30 @@ function parseAndDisplaySettings(data) {
         const value = settings[key]; // Получаем значение из прочитанных данных
 
         if (value === undefined) {
-             // log(`⚠️ Значение для настройки '${key}' не найдено в полученных данных.`, 'info');
-             return; // Пропускаем, если настройка не пришла с устройства (может быть новая прошивка)
+             return; 
         }
         
-        // Определяем группу для текущей настройки
-        let groupName = 'Прочие'; // Группа по умолчанию
+        // Определяем группу для текущей настройки (УТОЧНЕНО)
+        let groupName = 'Прочие'; 
         if (['targetHumidity', 'lockHoldTime'].includes(key)) groupName = 'Основные';
         else if (['lockTimeIndex', 'menuTimeoutOptionIndex', 'screenTimeoutOptionIndex'].includes(key)) groupName = 'Таймауты';
         else if (['doorSoundEnabled', 'waterSilicaSoundEnabled'].includes(key)) groupName = 'Звуковые оповещения';
         else if (['waterHeaterEnabled', 'waterHeaterMaxTemp'].includes(key)) groupName = 'Подогрев воды';
-        else if (['deadZonePercent', 'minHumidityChange', 'maxOperationDuration', 'operationCooldown', 'maxSafeHumidity', 'resourceCheckDiff', 'humidityHysteresis', 'lowFaultThreshold', 'emptyFaultThreshold'].includes(key)) groupName = 'Логика влажности';
+        else if (['deadZonePercent', 'minHumidityChangeForTimeout', 'maxOperationDuration', 'operationCooldown', 'maxSafeHumidity', 'resourceCheckDiff', 'humidityHysteresis', 'resourceLowFaultThreshold', 'emptyFaultThreshold'].includes(key)) groupName = 'Логика влажности';
         else if (['tempOffsetTop', 'humOffsetTop', 'tempOffsetHum', 'humOffsetHum'].includes(key)) groupName = 'Калибровка DHT';
         else if (['autoRebootEnabled', 'autoRebootHour', 'autoRebootMinute', 'autoRebootDays'].includes(key)) groupName = 'Авто-перезагрузка';
         else if (['resetCount', 'wdtResetCount', 'autoRebootCounter', 'totalRebootCounter', 'lastRebootTimestamp'].includes(key)) groupName = 'Статистика';
 
         // Создаем новую группу, если она изменилась
         if (groupName !== currentGroup) {
-            el.innerHTML += `<div class="settings-group"><h3>${groupName}</h3></div>`;
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'settings-group';
+            groupDiv.innerHTML = `<h3>${groupName}</h3>`;
+            el.appendChild(groupDiv);
             currentGroup = groupName;
         }
 
-        const groupEl = el.querySelector(`.settings-group:last-child`); // Находим текущую группу
+        const groupEl = el.querySelector(`.settings-group:last-child`);
         const settingItem = document.createElement('div');
         settingItem.className = 'setting-item';
         
