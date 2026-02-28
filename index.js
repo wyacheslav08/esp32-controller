@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С УВЕДОМЛЕНИЯМИ
+// BLE Web Interface - РАБОЧАЯ ВЕСИЯ С K10
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -10,12 +10,14 @@ const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
 const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
 const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
+const BLE_CHAR_COMMAND_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a7";
 
 // Глобальные переменные
 let bluetoothDevice = null;
 let gattServer = null;
 let service = null;
 let characteristics = {};
+let pendingSettings = {};
 
 // Элементы DOM
 const statusLed = document.querySelector('.status-led');
@@ -68,6 +70,8 @@ function addStyles() {
         .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
         .btn-primary { background: #4caf50; color: white; }
         .btn-secondary { background: #2196f3; color: white; }
+        .status-on { color: #4caf50; font-weight: bold; }
+        .status-off { color: #f44336; font-weight: bold; }
     `;
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
@@ -101,6 +105,10 @@ function updateStatus(text, state) {
 
 async function connectToDevice() {
     try {
+        if (bluetoothDevice && gattServer?.connected) {
+            await disconnectFromDevice();
+        }
+        
         updateStatus('🔍 Поиск...', 'connecting');
         connectButton.disabled = true;
         connectButton.textContent = '⏳ Поиск...';
@@ -151,6 +159,8 @@ async function findCharacteristics() {
     
     for (let char of chars) {
         const uuid = char.uuid.toLowerCase();
+        log(`  UUID: ${uuid.substring(4, 8)}...${uuid.substring(28)}`);
+        
         if (uuid.includes('26a1')) characteristics.targetHum = char;
         else if (uuid.includes('26a2')) characteristics.currentTemp = char;
         else if (uuid.includes('26a3')) characteristics.currentHum = char;
@@ -191,6 +201,8 @@ function handleNotification(charName, value) {
     const decoder = new TextDecoder('utf-8');
     const data = decoder.decode(value);
     
+    log(`📨 ${charName}: ${data}`);
+    
     switch(charName) {
         case 'currentTemp':
             if (data.startsWith('T:')) {
@@ -206,6 +218,12 @@ function handleNotification(charName, value) {
             break;
         case 'k10':
             parseK10Status(data);
+            break;
+        case 'sysInfo':
+            if (data.startsWith('E:')) {
+                const eff = parseFloat(data.substring(2));
+                updateEfficiencyDisplay(eff);
+            }
             break;
     }
 }
@@ -237,12 +255,25 @@ async function loadAllData() {
         } catch (e) {}
     }
     
+    if (characteristics.sysInfo) {
+        try {
+            const value = await characteristics.sysInfo.readValue();
+            const data = new TextDecoder().decode(value);
+            if (data.startsWith('E:')) {
+                const eff = parseFloat(data.substring(2));
+                updateEfficiencyDisplay(eff);
+            }
+        } catch (e) {}
+    }
+    
     if (characteristics.allSettings) {
         try {
             const value = await characteristics.allSettings.readValue();
             const data = new TextDecoder().decode(value);
             parseAndDisplaySettings(data);
-        } catch (e) {}
+        } catch (e) {
+            log(`❌ Settings ошибка: ${e.message}`, 'error');
+        }
     }
     
     if (characteristics.k10) {
@@ -250,12 +281,14 @@ async function loadAllData() {
             const value = await characteristics.k10.readValue();
             const data = new TextDecoder().decode(value);
             parseK10Status(data);
-        } catch (e) {}
+        } catch (e) {
+            log(`❌ K10 ошибка: ${e.message}`, 'error');
+        }
     }
 }
 
 // =========================================================================
-// Отображение
+// Отображение датчиков
 // =========================================================================
 
 function updateTempDisplay(temp) {
@@ -280,6 +313,19 @@ function updateHumDisplay(hum) {
                  document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
     }
     el.innerHTML = `<div>💧 Влажность</div><div class="sensor-value">${hum.toFixed(1)}%</div>`;
+}
+
+function updateEfficiencyDisplay(eff) {
+    let el = document.getElementById('eff-display');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'eff-display';
+        el.className = 'sensor-card';
+        const humEl = document.getElementById('hum-display');
+        humEl ? humEl.parentNode.insertBefore(el, humEl.nextSibling) :
+                document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
+    }
+    el.innerHTML = `<div>⚡ Эффективность</div><div class="sensor-value">${eff.toFixed(1)}%/мин</div>`;
 }
 
 // =========================================================================
@@ -315,9 +361,20 @@ function setupK10Button() {
     button.addEventListener('mousedown', startPress);
     button.addEventListener('mouseup', releasePress);
     button.addEventListener('mouseleave', releasePress);
+    button.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        startPress();
+    });
+    button.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        releasePress();
+    });
     
     async function sendK10Command(cmd) {
-        if (!characteristics.k10) return;
+        if (!characteristics.k10) {
+            log('❌ K10 характеристика не найдена', 'error');
+            return;
+        }
         try {
             await characteristics.k10.writeValue(new TextEncoder().encode(cmd));
             log(`📤 K10: ${cmd}`);
@@ -358,15 +415,24 @@ function parseK10Status(data) {
     const parts = data.split(',');
     parts.forEach(part => {
         const [key, value] = part.split(':');
-        if (key === 'LOCK') {
-            document.getElementById('lock-icon').textContent = value === 'active' ? '🔒' : '🔓';
-            document.getElementById('lock-active').style.display = value === 'active' ? 'block' : 'none';
-        } else if (key === 'DOOR') {
+        if (!key || !value) return;
+        
+        const cleanKey = key.trim();
+        const cleanValue = value.trim();
+        
+        if (cleanKey === 'LOCK') {
+            const isActive = cleanValue === 'active';
+            document.getElementById('lock-icon').textContent = isActive ? '🔒' : '🔓';
+            document.getElementById('lock-active').style.display = isActive ? 'block' : 'none';
+        } else if (cleanKey === 'DOOR') {
+            const isOpen = cleanValue === 'open';
             const doorSpan = document.querySelector('#door-status span');
-            doorSpan.textContent = value === 'open' ? 'Открыта' : 'Закрыта';
-            doorSpan.className = value === 'open' ? 'door-open' : 'door-closed';
-        } else if (key === 'HOLD') {
-            document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${value} мс`;
+            if (doorSpan) {
+                doorSpan.textContent = isOpen ? 'Открыта' : 'Закрыта';
+                doorSpan.className = isOpen ? 'door-open' : 'door-closed';
+            }
+        } else if (cleanKey === 'HOLD') {
+            document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${cleanValue} мс`;
         }
     });
 }
@@ -390,8 +456,9 @@ function parseAndDisplaySettings(data) {
         if (k && v) settings[k.trim()] = v.trim();
     });
     
-    let html = '<h2>⚙️ Настройки</h2>';
+    let html = '<h2>⚙️ Настройки системы</h2>';
     
+    // Основные
     html += '<div class="settings-group"><h3>🎯 Основные</h3>';
     if (settings.targetHumidity) {
         html += `<div class="setting-item">🌡️ Целевая влажность: <strong>${settings.targetHumidity}%</strong></div>`;
@@ -401,13 +468,59 @@ function parseAndDisplaySettings(data) {
     }
     html += '</div>';
     
-    html += '<div class="settings-group"><h3>🔊 Звук</h3>';
+    // Звук
+    html += '<div class="settings-group"><h3>🔊 Звуковые оповещения</h3>';
     if (settings.doorSoundEnabled !== undefined) {
         const enabled = settings.doorSoundEnabled === '1';
         html += `<div class="setting-item">🚪 Дверь: <span class="${enabled ? 'status-on' : 'status-off'}">${enabled ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
     }
+    if (settings.waterSilicaSoundEnabled !== undefined) {
+        const enabled = settings.waterSilicaSoundEnabled === '1';
+        html += `<div class="setting-item">💧 Ресурсы: <span class="${enabled ? 'status-on' : 'status-off'}">${enabled ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
+    }
     html += '</div>';
     
+    // Подогрев
+    html += '<div class="settings-group"><h3>💧 Подогрев воды</h3>';
+    if (settings.waterHeaterEnabled !== undefined) {
+        const enabled = settings.waterHeaterEnabled === '1';
+        html += `<div class="setting-item">⚡ Статус: <span class="${enabled ? 'status-on' : 'status-off'}">${enabled ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
+    }
+    if (settings.waterHeaterMaxTemp) {
+        html += `<div class="setting-item">🌡️ Макс. температура: <strong>${settings.waterHeaterMaxTemp}°C</strong></div>`;
+    }
+    html += '</div>';
+    
+    // Таймауты
+    html += '<div class="settings-group"><h3>⏱️ Таймауты</h3>';
+    const lockNames = ["ОТКЛ", "30 сек", "1 мин", "2 мин", "5 мин"];
+    if (settings.lockTimeIndex !== undefined) {
+        const idx = parseInt(settings.lockTimeIndex);
+        html += `<div class="setting-item">🔐 Блокировка: <strong>${lockNames[idx] || '?'}</strong></div>`;
+    }
+    const menuNames = ["ОТКЛ", "15 сек", "30 сек", "1 мин", "2 мин"];
+    if (settings.menuTimeoutOptionIndex !== undefined) {
+        const idx = parseInt(settings.menuTimeoutOptionIndex);
+        html += `<div class="setting-item">📱 Таймаут меню: <strong>${menuNames[idx] || '?'}</strong></div>`;
+    }
+    const screenNames = ["ОТКЛ", "30 сек", "1 мин", "5 мин", "10 мин"];
+    if (settings.screenTimeoutOptionIndex !== undefined) {
+        const idx = parseInt(settings.screenTimeoutOptionIndex);
+        html += `<div class="setting-item">🖥️ Таймаут экрана: <strong>${screenNames[idx] || '?'}</strong></div>`;
+    }
+    html += '</div>';
+    
+    // Статистика
+    html += '<div class="settings-group"><h3>📊 Статистика</h3>';
+    if (settings.wdtResetCount) {
+        html += `<div class="setting-item">🔄 WDT сбросов: <strong>${settings.wdtResetCount}</strong></div>`;
+    }
+    if (settings.rebootCounter) {
+        html += `<div class="setting-item">🔁 Перезагрузок: <strong>${settings.rebootCounter}</strong></div>`;
+    }
+    html += '</div>';
+    
+    // Кнопки
     html += `
         <div class="button-group">
             <button id="refresh-settings" class="btn btn-secondary">🔄 Обновить</button>
@@ -415,6 +528,7 @@ function parseAndDisplaySettings(data) {
     `;
     
     el.innerHTML = html;
+    
     document.getElementById('refresh-settings').onclick = () => loadAllData();
 }
 
@@ -422,21 +536,36 @@ function parseAndDisplaySettings(data) {
 // Отключение
 // =========================================================================
 
-function handleDisconnect() {
-    log('❌ Отключено', 'error');
-    updateStatus('❌ Отключено', 'disconnected');
-    
-    if (connectButton) {
-        connectButton.textContent = '🔌 Подключиться';
-        connectButton.classList.remove('connected');
-        connectButton.disabled = false;
+async function disconnectFromDevice() {
+    if (gattServer && gattServer.connected) {
+        try {
+            gattServer.disconnect();
+        } catch (e) {}
     }
     
     gattServer = null;
     service = null;
     characteristics = {};
     
-    ['temp-display', 'hum-display', 'k10-section', 'settings-display'].forEach(id => {
+    if (bluetoothDevice) {
+        bluetoothDevice.removeEventListener('gattserverdisconnected', handleDisconnect);
+        bluetoothDevice = null;
+    }
+    
+    handleDisconnect();
+}
+
+function handleDisconnect() {
+    log('❌ Отключено', 'error');
+    updateStatus('❌ Отключено', 'disconnected');
+    
+    if (connectButton) {
+        connectButton.textContent = '🔌 Подключиться к устройству';
+        connectButton.classList.remove('connected');
+        connectButton.disabled = false;
+    }
+    
+    ['temp-display', 'hum-display', 'eff-display', 'k10-section', 'settings-display'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.remove();
     });
