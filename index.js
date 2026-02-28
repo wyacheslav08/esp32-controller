@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С ПРАВИЛЬНЫМ ПАРСИНГОМ
+// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С БИНАРНЫМ ЧТЕНИЕМ
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -18,7 +18,6 @@ let gattServer = null;
 let service = null;
 let characteristics = {};
 let pollingInterval = null;
-let pendingSettings = {};
 
 // Элементы DOM
 const statusLed = document.querySelector('.status-led');
@@ -75,7 +74,6 @@ function addStyles() {
         .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; }
         .btn-primary { background: #4caf50; color: white; }
         .btn-secondary { background: #2196f3; color: white; }
-        .btn-danger { background: #f44336; color: white; }
     `;
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
@@ -184,6 +182,46 @@ async function findCharacteristics() {
 }
 
 // =========================================================================
+// Чтение бинарных данных
+// =========================================================================
+
+function readFloat(value) {
+    try {
+        // Пробуем прочитать как 32-битный float (little-endian)
+        const floatVal = value.getFloat32(0, true);
+        if (!isNaN(floatVal) && isFinite(floatVal)) {
+            return floatVal;
+        }
+    } catch (e) {}
+    return null;
+}
+
+function readInt(value) {
+    try {
+        // Пробуем прочитать как 32-битный int
+        const intVal = value.getInt32(0, true);
+        if (!isNaN(intVal)) {
+            return intVal;
+        }
+    } catch (e) {}
+    return null;
+}
+
+function readString(value) {
+    try {
+        // Пробуем прочитать как строку
+        const decoder = new TextDecoder('utf-8');
+        let str = decoder.decode(value);
+        // Очищаем от непечатных символов
+        str = str.replace(/[^\x20-\x7E]/g, '');
+        if (str.length > 0) {
+            return str;
+        }
+    } catch (e) {}
+    return null;
+}
+
+// =========================================================================
 // Загрузка всех данных
 // =========================================================================
 
@@ -192,9 +230,17 @@ async function loadAllData() {
     if (characteristics.currentTemp) {
         try {
             const value = await characteristics.currentTemp.readValue();
-            const data = decodeValue(value);
-            log(`🌡️ Temp raw: ${data}`);
-            updateTempDisplay(data);
+            
+            // Пробуем как float
+            let temp = readFloat(value);
+            if (temp !== null) {
+                log(`🌡️ Temp float: ${temp.toFixed(1)}°C`);
+                updateTempDisplay(temp);
+            } else {
+                // Пробуем как строку
+                let str = readString(value);
+                if (str) log(`🌡️ Temp str: ${str}`);
+            }
         } catch (e) {}
     }
     
@@ -202,19 +248,11 @@ async function loadAllData() {
     if (characteristics.currentHum) {
         try {
             const value = await characteristics.currentHum.readValue();
-            const data = decodeValue(value);
-            log(`💧 Hum raw: ${data}`);
-            updateHumDisplay(data);
-        } catch (e) {}
-    }
-    
-    // Загружаем эффективность
-    if (characteristics.sysInfo) {
-        try {
-            const value = await characteristics.sysInfo.readValue();
-            const data = decodeValue(value);
-            if (data && data.includes('E:')) {
-                updateEfficiencyDisplay(data);
+            
+            let hum = readFloat(value);
+            if (hum !== null) {
+                log(`💧 Hum float: ${hum.toFixed(1)}%`);
+                updateHumDisplay(hum);
             }
         } catch (e) {}
     }
@@ -223,9 +261,11 @@ async function loadAllData() {
     if (characteristics.k10) {
         try {
             const value = await characteristics.k10.readValue();
-            const data = decodeValue(value);
-            log(`🔒 K10 raw: ${data}`);
-            if (data) parseK10Status(data);
+            let str = readString(value);
+            if (str) {
+                log(`🔒 K10: ${str}`);
+                parseK10Status(str);
+            }
         } catch (e) {}
     }
     
@@ -233,45 +273,12 @@ async function loadAllData() {
     if (characteristics.allSettings) {
         try {
             const value = await characteristics.allSettings.readValue();
-            const data = decodeValue(value);
-            log(`⚙️ Settings raw: ${data.substring(0, 50)}...`);
-            if (data) parseAndDisplaySettings(data);
-        } catch (e) {
-            log(`❌ Ошибка чтения настроек: ${e.message}`, 'error');
-        }
-    }
-}
-
-// =========================================================================
-// Правильное декодирование данных
-// =========================================================================
-
-function decodeValue(value) {
-    try {
-        // Пробуем разные варианты декодирования
-        let result = '';
-        
-        // Вариант 1: как UTF-8 строку
-        const decoder = new TextDecoder('utf-8');
-        result = decoder.decode(value);
-        
-        // Если получили осмысленную строку, возвращаем
-        if (result && result.length > 0 && result.charCodeAt(0) < 128) {
-            return result;
-        }
-        
-        // Вариант 2: как ASCII
-        result = '';
-        for (let i = 0; i < value.byteLength; i++) {
-            const byte = value.getUint8(i);
-            if (byte >= 32 && byte <= 126) { // печатные ASCII символы
-                result += String.fromCharCode(byte);
+            let str = readString(value);
+            if (str) {
+                log(`⚙️ Settings: ${str.substring(0, 50)}...`);
+                parseAndDisplaySettings(str);
             }
-        }
-        
-        return result;
-    } catch (e) {
-        return value.toString();
+        } catch (e) {}
     }
 }
 
@@ -289,10 +296,9 @@ function startPolling() {
         if (characteristics.currentTemp) {
             try {
                 const value = await characteristics.currentTemp.readValue();
-                const data = decodeValue(value);
-                if (data) {
-                    log(`🌡️ Temp: ${data}`);
-                    updateTempDisplay(data);
+                let temp = readFloat(value);
+                if (temp !== null) {
+                    updateTempDisplay(temp);
                 }
             } catch (e) {}
         }
@@ -301,10 +307,9 @@ function startPolling() {
         if (characteristics.currentHum) {
             try {
                 const value = await characteristics.currentHum.readValue();
-                const data = decodeValue(value);
-                if (data) {
-                    log(`💧 Hum: ${data}`);
-                    updateHumDisplay(data);
+                let hum = readFloat(value);
+                if (hum !== null) {
+                    updateHumDisplay(hum);
                 }
             } catch (e) {}
         }
@@ -313,10 +318,9 @@ function startPolling() {
         if (characteristics.k10) {
             try {
                 const value = await characteristics.k10.readValue();
-                const data = decodeValue(value);
-                if (data) {
-                    log(`🔒 K10: ${data}`);
-                    parseK10Status(data);
+                let str = readString(value);
+                if (str) {
+                    parseK10Status(str);
                 }
             } catch (e) {}
         }
@@ -328,14 +332,7 @@ function startPolling() {
 // Отображение данных
 // =========================================================================
 
-function extractNumber(str) {
-    if (!str) return null;
-    // Ищем число в строке (может быть с минусом и точкой)
-    const match = str.match(/-?\d+\.?\d*/);
-    return match ? match[0] : null;
-}
-
-function updateTempDisplay(data) {
+function updateTempDisplay(temp) {
     let el = document.getElementById('temp-display');
     if (!el) {
         el = document.createElement('div');
@@ -344,25 +341,14 @@ function updateTempDisplay(data) {
         document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
     }
     
-    let value = '--';
-    if (data) {
-        // Ищем число после "T:"
-        if (data.includes('T:')) {
-            const num = extractNumber(data.substring(data.indexOf('T:') + 2));
-            if (num) value = num;
-        } else {
-            const num = extractNumber(data);
-            if (num) value = num;
-        }
-    }
-    
+    const value = (temp !== null && !isNaN(temp)) ? temp.toFixed(1) : '--';
     el.innerHTML = `
         <div class="sensor-label">🌡️ Температура</div>
         <div class="sensor-value">${value}°C</div>
     `;
 }
 
-function updateHumDisplay(data) {
+function updateHumDisplay(hum) {
     let el = document.getElementById('hum-display');
     if (!el) {
         el = document.createElement('div');
@@ -376,52 +362,10 @@ function updateHumDisplay(data) {
         }
     }
     
-    let value = '--';
-    if (data) {
-        // Ищем число после "H:"
-        if (data.includes('H:')) {
-            const num = extractNumber(data.substring(data.indexOf('H:') + 2));
-            if (num) value = num;
-        } else {
-            const num = extractNumber(data);
-            if (num) value = num;
-        }
-    }
-    
+    const value = (hum !== null && !isNaN(hum)) ? hum.toFixed(1) : '--';
     el.innerHTML = `
         <div class="sensor-label">💧 Влажность</div>
         <div class="sensor-value">${value}%</div>
-    `;
-}
-
-function updateEfficiencyDisplay(data) {
-    let el = document.getElementById('eff-display');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'eff-display';
-        el.className = 'sensor-card';
-        const humEl = document.getElementById('hum-display');
-        if (humEl) {
-            humEl.parentNode.insertBefore(el, humEl.nextSibling);
-        } else {
-            document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
-        }
-    }
-    
-    let value = '--';
-    if (data) {
-        if (data.includes('E:')) {
-            const num = extractNumber(data.substring(data.indexOf('E:') + 2));
-            if (num) value = num;
-        } else {
-            const num = extractNumber(data);
-            if (num) value = num;
-        }
-    }
-    
-    el.innerHTML = `
-        <div class="sensor-label">⚡ Эффективность</div>
-        <div class="sensor-value">${value}%/мин</div>
     `;
 }
 
@@ -509,19 +453,17 @@ function setupK10Button() {
 }
 
 function parseK10Status(data) {
-    createK10Section();
-    
     if (!data) return;
     
     const parts = data.split(',');
     parts.forEach(part => {
         if (part.startsWith('LOCK:')) {
-            const isActive = part.substring(5) === 'active';
+            const isActive = part.substring(5).trim() === 'active';
             document.getElementById('lock-icon').textContent = isActive ? '🔒' : '🔓';
             document.getElementById('lock-active').style.display = isActive ? 'block' : 'none';
         }
         else if (part.startsWith('DOOR:')) {
-            const isOpen = part.substring(5) === 'open';
+            const isOpen = part.substring(5).trim() === 'open';
             const doorSpan = document.querySelector('#door-status span');
             if (doorSpan) {
                 doorSpan.textContent = isOpen ? 'Открыта' : 'Закрыта';
@@ -529,7 +471,7 @@ function parseK10Status(data) {
             }
         }
         else if (part.startsWith('HOLD:')) {
-            const time = part.substring(5);
+            const time = part.substring(5).trim();
             document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${time} мс`;
         }
     });
@@ -664,7 +606,7 @@ function handleDisconnect() {
     }
     
     // Очищаем интерфейс
-    ['temp-display', 'hum-display', 'eff-display', 'k10-section', 'settings-display'].forEach(id => {
+    ['temp-display', 'hum-display', 'k10-section', 'settings-display'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.remove();
     });
