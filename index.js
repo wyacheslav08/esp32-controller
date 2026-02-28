@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С ПРАВИЛЬНЫМ ДЕКОДИРОВАНИЕМ
+// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С ПРАВИЛЬНЫМ ПАРСИНГОМ
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -75,6 +75,7 @@ function addStyles() {
         .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; }
         .btn-primary { background: #4caf50; color: white; }
         .btn-secondary { background: #2196f3; color: white; }
+        .btn-danger { background: #f44336; color: white; }
     `;
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
@@ -192,7 +193,7 @@ async function loadAllData() {
         try {
             const value = await characteristics.currentTemp.readValue();
             const data = decodeValue(value);
-            log(`🌡️ Temp: ${data}`);
+            log(`🌡️ Temp raw: ${data}`);
             updateTempDisplay(data);
         } catch (e) {}
     }
@@ -202,7 +203,7 @@ async function loadAllData() {
         try {
             const value = await characteristics.currentHum.readValue();
             const data = decodeValue(value);
-            log(`💧 Hum: ${data}`);
+            log(`💧 Hum raw: ${data}`);
             updateHumDisplay(data);
         } catch (e) {}
     }
@@ -212,7 +213,7 @@ async function loadAllData() {
         try {
             const value = await characteristics.sysInfo.readValue();
             const data = decodeValue(value);
-            if (data.startsWith('E:')) {
+            if (data && data.includes('E:')) {
                 updateEfficiencyDisplay(data);
             }
         } catch (e) {}
@@ -223,8 +224,8 @@ async function loadAllData() {
         try {
             const value = await characteristics.k10.readValue();
             const data = decodeValue(value);
-            log(`🔒 K10: ${data}`);
-            parseK10Status(data);
+            log(`🔒 K10 raw: ${data}`);
+            if (data) parseK10Status(data);
         } catch (e) {}
     }
     
@@ -233,8 +234,8 @@ async function loadAllData() {
         try {
             const value = await characteristics.allSettings.readValue();
             const data = decodeValue(value);
-            log(`⚙️ Settings: ${data.substring(0, 50)}...`);
-            parseAndDisplaySettings(data);
+            log(`⚙️ Settings raw: ${data.substring(0, 50)}...`);
+            if (data) parseAndDisplaySettings(data);
         } catch (e) {
             log(`❌ Ошибка чтения настроек: ${e.message}`, 'error');
         }
@@ -246,27 +247,30 @@ async function loadAllData() {
 // =========================================================================
 
 function decodeValue(value) {
-    // Пробуем разные способы декодирования
     try {
-        // Сначала пробуем как UTF-8 строку
-        const decoder = new TextDecoder('utf-8');
-        let str = decoder.decode(value);
+        // Пробуем разные варианты декодирования
+        let result = '';
         
-        // Проверяем, не бинарные ли это данные
-        if (str.charCodeAt(0) > 127) {
-            // Если первый символ не ASCII, возможно это бинарные данные
-            // Пробуем интерпретировать как float
-            const floatVal = value.getFloat32(0, true);
-            if (!isNaN(floatVal)) {
-                return floatVal.toString();
+        // Вариант 1: как UTF-8 строку
+        const decoder = new TextDecoder('utf-8');
+        result = decoder.decode(value);
+        
+        // Если получили осмысленную строку, возвращаем
+        if (result && result.length > 0 && result.charCodeAt(0) < 128) {
+            return result;
+        }
+        
+        // Вариант 2: как ASCII
+        result = '';
+        for (let i = 0; i < value.byteLength; i++) {
+            const byte = value.getUint8(i);
+            if (byte >= 32 && byte <= 126) { // печатные ASCII символы
+                result += String.fromCharCode(byte);
             }
         }
         
-        // Очищаем строку от непечатных символов
-        str = str.replace(/[^\x20-\x7E]/g, '');
-        return str;
+        return result;
     } catch (e) {
-        // Если не получилось, возвращаем как есть
         return value.toString();
     }
 }
@@ -286,7 +290,10 @@ function startPolling() {
             try {
                 const value = await characteristics.currentTemp.readValue();
                 const data = decodeValue(value);
-                if (data) updateTempDisplay(data);
+                if (data) {
+                    log(`🌡️ Temp: ${data}`);
+                    updateTempDisplay(data);
+                }
             } catch (e) {}
         }
         
@@ -295,16 +302,10 @@ function startPolling() {
             try {
                 const value = await characteristics.currentHum.readValue();
                 const data = decodeValue(value);
-                if (data) updateHumDisplay(data);
-            } catch (e) {}
-        }
-        
-        // Читаем эффективность
-        if (characteristics.sysInfo) {
-            try {
-                const value = await characteristics.sysInfo.readValue();
-                const data = decodeValue(value);
-                if (data && data.startsWith('E:')) updateEfficiencyDisplay(data);
+                if (data) {
+                    log(`💧 Hum: ${data}`);
+                    updateHumDisplay(data);
+                }
             } catch (e) {}
         }
         
@@ -313,7 +314,10 @@ function startPolling() {
             try {
                 const value = await characteristics.k10.readValue();
                 const data = decodeValue(value);
-                if (data) parseK10Status(data);
+                if (data) {
+                    log(`🔒 K10: ${data}`);
+                    parseK10Status(data);
+                }
             } catch (e) {}
         }
         
@@ -324,6 +328,13 @@ function startPolling() {
 // Отображение данных
 // =========================================================================
 
+function extractNumber(str) {
+    if (!str) return null;
+    // Ищем число в строке (может быть с минусом и точкой)
+    const match = str.match(/-?\d+\.?\d*/);
+    return match ? match[0] : null;
+}
+
 function updateTempDisplay(data) {
     let el = document.getElementById('temp-display');
     if (!el) {
@@ -333,16 +344,21 @@ function updateTempDisplay(data) {
         document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
     }
     
-    // Извлекаем число из строки
-    let value = data;
-    if (data.startsWith('T:')) value = data.substring(2);
-    
-    // Оставляем только цифры и точку
-    value = value.replace(/[^\d.-]/g, '');
+    let value = '--';
+    if (data) {
+        // Ищем число после "T:"
+        if (data.includes('T:')) {
+            const num = extractNumber(data.substring(data.indexOf('T:') + 2));
+            if (num) value = num;
+        } else {
+            const num = extractNumber(data);
+            if (num) value = num;
+        }
+    }
     
     el.innerHTML = `
         <div class="sensor-label">🌡️ Температура</div>
-        <div class="sensor-value">${value || '--'}°C</div>
+        <div class="sensor-value">${value}°C</div>
     `;
 }
 
@@ -360,13 +376,21 @@ function updateHumDisplay(data) {
         }
     }
     
-    let value = data;
-    if (data.startsWith('H:')) value = data.substring(2);
-    value = value.replace(/[^\d.-]/g, '');
+    let value = '--';
+    if (data) {
+        // Ищем число после "H:"
+        if (data.includes('H:')) {
+            const num = extractNumber(data.substring(data.indexOf('H:') + 2));
+            if (num) value = num;
+        } else {
+            const num = extractNumber(data);
+            if (num) value = num;
+        }
+    }
     
     el.innerHTML = `
         <div class="sensor-label">💧 Влажность</div>
-        <div class="sensor-value">${value || '--'}%</div>
+        <div class="sensor-value">${value}%</div>
     `;
 }
 
@@ -384,13 +408,20 @@ function updateEfficiencyDisplay(data) {
         }
     }
     
-    let value = data;
-    if (data.startsWith('E:')) value = data.substring(2);
-    value = value.replace(/[^\d.-]/g, '');
+    let value = '--';
+    if (data) {
+        if (data.includes('E:')) {
+            const num = extractNumber(data.substring(data.indexOf('E:') + 2));
+            if (num) value = num;
+        } else {
+            const num = extractNumber(data);
+            if (num) value = num;
+        }
+    }
     
     el.innerHTML = `
         <div class="sensor-label">⚡ Эффективность</div>
-        <div class="sensor-value">${value || '--'}%/мин</div>
+        <div class="sensor-value">${value}%/мин</div>
     `;
 }
 
@@ -480,6 +511,8 @@ function setupK10Button() {
 function parseK10Status(data) {
     createK10Section();
     
+    if (!data) return;
+    
     const parts = data.split(',');
     parts.forEach(part => {
         if (part.startsWith('LOCK:')) {
@@ -498,11 +531,6 @@ function parseK10Status(data) {
         else if (part.startsWith('HOLD:')) {
             const time = part.substring(5);
             document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${time} мс`;
-            // Обновляем время для кнопки
-            const button = document.getElementById('k10-button');
-            if (button) {
-                button.setAttribute('data-hold-time', time);
-            }
         }
     });
 }
@@ -518,6 +546,11 @@ function parseAndDisplaySettings(data) {
         el.id = 'settings-display';
         el.className = 'settings-card';
         document.querySelector('.container').appendChild(el);
+    }
+    
+    if (!data) {
+        el.innerHTML = '<p>Нет данных настроек</p>';
+        return;
     }
     
     const settings = {};
@@ -580,59 +613,10 @@ function parseAndDisplaySettings(data) {
     }
     html += '</div>';
     
-    // Логика влажности
-    html += '<div class="settings-group"><h3>💧 Логика влажности</h3>';
-    if (settings.deadZonePercent) {
-        html += `<div class="setting-item">📊 Мертвая зона: <strong>${parseFloat(settings.deadZonePercent).toFixed(1)}%</strong></div>`;
-    }
-    if (settings.minHumidityChange) {
-        html += `<div class="setting-item">📈 Мин. изменение: <strong>${parseFloat(settings.minHumidityChange).toFixed(1)}%</strong></div>`;
-    }
-    if (settings.maxOperationDuration) {
-        html += `<div class="setting-item">⏱️ Макс. время: <strong>${settings.maxOperationDuration} мин</strong></div>`;
-    }
-    if (settings.operationCooldown) {
-        html += `<div class="setting-item">😴 Отдых: <strong>${settings.operationCooldown} мин</strong></div>`;
-    }
-    if (settings.maxSafeHumidity) {
-        html += `<div class="setting-item">⚠️ Макс. безопасная: <strong>${settings.maxSafeHumidity}%</strong></div>`;
-    }
-    html += '</div>';
-    
-    // Калибровка
-    html += '<div class="settings-group"><h3>📏 Калибровка DHT</h3>';
-    if (settings.tempOffsetTop !== undefined) {
-        const val = parseInt(settings.tempOffsetTop);
-        html += `<div class="setting-item">🌡️ Температура верх: <strong>${val > 0 ? '+' : ''}${val}°C</strong></div>`;
-    }
-    if (settings.humOffsetTop !== undefined) {
-        const val = parseInt(settings.humOffsetTop);
-        html += `<div class="setting-item">💧 Влажность верх: <strong>${val > 0 ? '+' : ''}${val}%</strong></div>`;
-    }
-    if (settings.tempOffsetHum !== undefined) {
-        const val = parseInt(settings.tempOffsetHum);
-        html += `<div class="setting-item">🌡️ Температура увл: <strong>${val > 0 ? '+' : ''}${val}°C</strong></div>`;
-    }
-    if (settings.humOffsetHum !== undefined) {
-        const val = parseInt(settings.humOffsetHum);
-        html += `<div class="setting-item">💧 Влажность увл: <strong>${val > 0 ? '+' : ''}${val}%</strong></div>`;
-    }
-    html += '</div>';
-    
-    // Статистика
-    html += '<div class="settings-group"><h3>📊 Статистика</h3>';
-    if (settings.wdtResetCount) {
-        html += `<div class="setting-item">🔄 WDT сбросов: <strong>${settings.wdtResetCount}</strong></div>`;
-    }
-    if (settings.rebootCounter) {
-        html += `<div class="setting-item">🔁 Перезагрузок: <strong>${settings.rebootCounter}</strong></div>`;
-    }
-    html += '</div>';
-    
-    // Кнопки
+    // Кнопка обновления
     html += `
         <div class="button-group">
-            <button id="refresh-settings" class="btn btn-secondary">🔄 Обновить</button>
+            <button id="refresh-settings" class="btn btn-secondary">🔄 Обновить данные</button>
         </div>
     `;
     
