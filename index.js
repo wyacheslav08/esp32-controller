@@ -464,6 +464,12 @@ async function connectToDevice() {
         
         await requestInitialData();
         createK10Section();
+        // После того как все характеристики найдены и подписки установлены, 
+        // активируйте кнопку K10.
+        const k10Button = document.getElementById('k10-button');
+        if (k10Button) {
+            k10Button.disabled = false; // Разблокировать кнопку K10
+        }
         
         if (characteristics.k10) {
             requestK10Status();
@@ -484,14 +490,15 @@ async function connectToDevice() {
 async function discoverCharacteristics() {
     log('Поиск характеристик...');
     
-    const charUUIDs = [
-        { name: 'targetHum', uuid: BLE_CHAR_TARGET_HUM_UUID },
-        { name: 'currentTemp', uuid: BLE_CHAR_CURRENT_TEMP_UUID },
-        { name: 'currentHum', uuid: BLE_CHAR_CURRENT_HUM_UUID },
-        { name: 'allSettings', uuid: BLE_CHAR_ALL_SETTINGS_UUID },
-        { name: 'sysInfo', uuid: BLE_CHAR_SYS_INFO_UUID },
-        { name: 'k10', uuid: BLE_CHAR_K10_UUID },
-        { name: 'command', uuid: BLE_CHAR_COMMAND_UUID } // ← ВОТ СЮДА ДОБАВИТЬ!
+    // Создаем регулярные выражения для каждого UUID
+    const uuidPatterns = [
+        { name: 'targetHum', pattern: new RegExp(BLE_CHAR_TARGET_HUM_UUID.toLowerCase() + '$') },
+        { name: 'currentTemp', pattern: new RegExp(BLE_CHAR_CURRENT_TEMP_UUID.toLowerCase() + '$') },
+        { name: 'currentHum', pattern: new RegExp(BLE_CHAR_CURRENT_HUM_UUID.toLowerCase() + '$') },
+        { name: 'allSettings', pattern: new RegExp(BLE_CHAR_ALL_SETTINGS_UUID.toLowerCase() + '$') },
+        { name: 'sysInfo', pattern: new RegExp(BLE_CHAR_SYS_INFO_UUID.toLowerCase() + '$') },
+        { name: 'k10', pattern: new RegExp(BLE_CHAR_K10_UUID.toLowerCase() + '$') },
+        { name: 'command', pattern: new RegExp(BLE_CHAR_COMMAND_UUID.toLowerCase() + '$') }
     ];
     
     try {
@@ -503,42 +510,28 @@ async function discoverCharacteristics() {
             const uuid = char.uuid.toLowerCase();
             log(`  [${i}] UUID: ${uuid}`);
             
-            // Сопоставляем по UUID
-            if (uuid.includes(BLE_CHAR_TARGET_HUM_UUID.toLowerCase())) {
-                characteristics.targetHum = char;
-                log('    ✅ targetHum');
-            } else if (uuid.includes(BLE_CHAR_CURRENT_TEMP_UUID.toLowerCase())) {
-                characteristics.currentTemp = char;
-                log('    ✅ currentTemp');
-            } else if (uuid.includes(BLE_CHAR_CURRENT_HUM_UUID.toLowerCase())) {
-                characteristics.currentHum = char;
-                log('    ✅ currentHum');
-            } else if (uuid.includes(BLE_CHAR_ALL_SETTINGS_UUID.toLowerCase())) {
-                characteristics.allSettings = char;
-                log('    ✅ allSettings');
-            } else if (uuid.includes(BLE_CHAR_SYS_INFO_UUID.toLowerCase())) {
-                characteristics.sysInfo = char;
-                log('    ✅ sysInfo');
-            } else if (uuid.includes(BLE_CHAR_K10_UUID.toLowerCase())) {
-                characteristics.k10 = char;
-                log('    ✅ K10 НАЙДЕН!');
-            } else if (uuid.includes(BLE_CHAR_COMMAND_UUID.toLowerCase())) { // ← И СЮДА ДОБАВИТЬ!
-                characteristics.command = char;
-                log('    ✅ command');
+            // Проверяем каждый паттерн
+            for (const pattern of uuidPatterns) {
+                if (pattern.pattern.test(uuid)) {
+                    characteristics[pattern.name] = char;
+                    log(`    ✅ ${pattern.name}`);
+                    break;
+                }
             }
         }
     } catch (e) {
         log(`❌ Ошибка: ${e.message}`, 'error');
     }
     
+    // Выводим результаты
+    const expectedCount = uuidPatterns.length;
+    const foundCount = Object.keys(characteristics).length;
+    log(`📊 Найдено характеристик: ${foundCount} из ${expectedCount}`);
+    
     if (characteristics.k10) {
-        log('🎉 K10 успешно найден и готов к работе!');
+        log('🎉 K10 успешно найден!');
     } else {
         log('❌ K10 не найден!', 'error');
-    }
-    
-    if (characteristics.command) {
-        log('📝 Характеристика команд найдена');
     }
 }
 
@@ -1370,7 +1363,7 @@ function setupSettingsHandlers(initialSettings) {
     
     try {
         // Фильтруем только изменяемые настройки (без статистики)
-        const editableKeys = [
+        /*const editableKeys = [
             'targetHumidity', 'lockHoldTime', 'doorSoundEnabled', 'waterSilicaSoundEnabled',
             'waterHeaterEnabled', 'waterHeaterMaxTemp', 'lockTimeIndex', 'menuTimeoutOptionIndex',
             'screenTimeoutOptionIndex', 'deadZonePercent', 'minHumidityChange', 'maxOperationDuration',
@@ -1378,22 +1371,21 @@ function setupSettingsHandlers(initialSettings) {
             'lowFaultThreshold', 'emptyFaultThreshold', 'tempOffsetTop', 'humOffsetTop',
             'tempOffsetHum', 'humOffsetHum', 'autoRebootEnabled', 'autoRebootHour',
             'autoRebootMinute', 'autoRebootDays'
-        ];
-        
+        ];*/
+
         let settingsString = '';
         for (const [key, value] of Object.entries(pendingSettings)) {
-            // Сохраняем только изменяемые настройки
-            if (editableKeys.includes(key)) {
-                if (settingsString.length > 0) settingsString += ',';
-                settingsString += `${key}=${value}`;
-            }
+            // Здесь уже нет необходимости проверять editableKeys
+            if (settingsString.length > 0) settingsString += ',';
+            settingsString += `${key}=${value}`;
         }
-        
+
         if (settingsString.length === 0) {
             log('ℹ️ Нет изменяемых настроек для сохранения');
             pendingSettings = {};
             return;
         }
+        
         
         log(`📤 Сохранение настроек: ${settingsString}`);
         
