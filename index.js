@@ -292,13 +292,42 @@ async function readK10Status() {
     
     try {
         const value = await characteristics.k10.readValue();
-        const data = readData(value);
-        if (data && data.type === 'string') {
-            log(`🔒 K10: ${data.value}`);
-            parseK10Status(data.value);
+        
+        // Пробуем разные способы декодирования
+        let data = null;
+        
+        // Способ 1: как строку
+        try {
+            const decoder = new TextDecoder('utf-8');
+            const str = decoder.decode(value);
+            if (str && str.length > 0 && str.includes(',')) {
+                data = str;
+            }
+        } catch (e) {}
+        
+        // Способ 2: как ASCII (побайтово)
+        if (!data) {
+            let str = '';
+            for (let i = 0; i < value.byteLength; i++) {
+                const byte = value.getUint8(i);
+                if (byte >= 32 && byte <= 126) { // печатные ASCII
+                    str += String.fromCharCode(byte);
+                }
+            }
+            if (str && str.includes(',')) {
+                data = str;
+            }
         }
+        
+        if (data) {
+            log(`🔒 K10: ${data}`);
+            parseK10Status(data);
+        } else {
+            // Если данные не читаются, пробуем записать и прочитать
+            await sendK10Command('STATUS');
+        }
+        
     } catch (e) {
-        // Игнорируем ошибки, они будут в следующий раз
         if (!e.message.includes('invalid attribute length')) {
             log(`❌ K10 ошибка: ${e.message}`, 'error');
         }
@@ -314,43 +343,45 @@ async function readK10Status() {
 function startPolling() {
     if (pollingInterval) clearInterval(pollingInterval);
     
+    let k10ReadCount = 0;
+    
     pollingInterval = setInterval(async () => {
         if (!gattServer?.connected) return;
         
-        // Читаем температуру
+        // Читаем температуру (как строку)
         if (characteristics.currentTemp) {
             try {
                 const value = await characteristics.currentTemp.readValue();
-                const data = readData(value);
-                if (data) {
-                    if (data.type === 'float') {
-                        updateTempDisplay(data.value);
-                    } else if (data.type === 'string' && data.value.startsWith('T:')) {
-                        const num = parseFloat(data.value.substring(2));
-                        if (!isNaN(num)) updateTempDisplay(num);
+                const decoder = new TextDecoder('utf-8');
+                const str = decoder.decode(value);
+                if (str && str.startsWith('T:')) {
+                    const num = parseFloat(str.substring(2));
+                    if (!isNaN(num)) {
+                        updateTempDisplay(num);
                     }
                 }
             } catch (e) {}
         }
         
-        // Читаем влажность
+        // Читаем влажность (как строку)
         if (characteristics.currentHum) {
             try {
                 const value = await characteristics.currentHum.readValue();
-                const data = readData(value);
-                if (data) {
-                    if (data.type === 'float') {
-                        updateHumDisplay(data.value);
-                    } else if (data.type === 'string' && data.value.startsWith('H:')) {
-                        const num = parseFloat(data.value.substring(2));
-                        if (!isNaN(num)) updateHumDisplay(num);
+                const decoder = new TextDecoder('utf-8');
+                const str = decoder.decode(value);
+                if (str && str.startsWith('H:')) {
+                    const num = parseFloat(str.substring(2));
+                    if (!isNaN(num)) {
+                        updateHumDisplay(num);
+                        log(`💧 Hum: ${num.toFixed(1)}%`);
                     }
                 }
             } catch (e) {}
         }
         
-        // Читаем K10 статус (реже, каждые 5 секунд)
-        if (characteristics.k10 && Math.random() < 0.3) { // ~ раз в 3 цикла
+        // Читаем K10 (каждый 2-й раз)
+        k10ReadCount++;
+        if (k10ReadCount % 2 === 0 && characteristics.k10) {
             await readK10Status();
         }
         
@@ -429,6 +460,13 @@ function setupK10Button() {
     let isPressed = false;
     let holdTime = 1000;
     
+    // Читаем holdTime из настроек если есть
+    const holdTimeEl = document.getElementById('hold-time');
+    if (holdTimeEl) {
+        const match = holdTimeEl.textContent.match(/\d+/);
+        if (match) holdTime = parseInt(match[0]);
+    }
+    
     button.addEventListener('mousedown', startPress);
     button.addEventListener('mouseup', releasePress);
     button.addEventListener('mouseleave', releasePress);
@@ -447,21 +485,22 @@ function setupK10Button() {
             return;
         }
         
-        // Не отправляем команды, если предыдущая ещё выполняется
-        if (isReadingK10 && cmd !== 'RELEASE') {
-            log('⏳ K10 занят, пробуем позже');
-            return;
-        }
-        
         try {
             const encoder = new TextEncoder();
-            await characteristics.k10.writeValue(encoder.encode(cmd));
+            const data = encoder.encode(cmd);
+            
+            // Убедимся что данные не слишком длинные
+            if (data.byteLength > 20) {
+                log('❌ K10 команда слишком длинная', 'error');
+                return;
+            }
+            
+            await characteristics.k10.writeValue(data);
             log(`📤 K10: ${cmd}`);
             
-            // После отправки ACTIVATE, читаем статус
-            if (cmd === 'ACTIVATE') {
-                setTimeout(() => readK10Status(), 500);
-            }
+            // После записи читаем статус
+            setTimeout(() => readK10Status(), 300);
+            
         } catch (e) {
             log(`❌ K10 ошибка: ${e.message}`, 'error');
         }
@@ -472,11 +511,13 @@ function setupK10Button() {
         isPressed = true;
         sendK10Command('PRESS');
         button.textContent = '⏳ Удерживайте...';
+        button.style.background = '#f57c00';
         
         pressTimer = setTimeout(async () => {
             if (isPressed) {
                 await sendK10Command('ACTIVATE');
                 button.textContent = '🔒 Замок активирован!';
+                button.style.background = '#e65100';
                 document.getElementById('lock-active').style.display = 'block';
                 document.getElementById('lock-icon').textContent = '🔒';
             }
@@ -488,6 +529,7 @@ function setupK10Button() {
         clearTimeout(pressTimer);
         sendK10Command('RELEASE');
         button.textContent = '🔒 Удерживайте для активации';
+        button.style.background = '#ff9800';
         document.getElementById('lock-active').style.display = 'none';
         isPressed = false;
     }
@@ -496,24 +538,37 @@ function setupK10Button() {
 function parseK10Status(data) {
     if (!data) return;
     
+    log(`📊 Парсинг K10: ${data}`);
+    
     const parts = data.split(',');
     parts.forEach(part => {
-        if (part.startsWith('LOCK:')) {
-            const isActive = part.substring(5).trim() === 'active';
+        const [key, value] = part.split(':');
+        if (!key || !value) return;
+        
+        const cleanKey = key.trim();
+        const cleanValue = value.trim();
+        
+        if (cleanKey === 'LOCK') {
+            const isActive = cleanValue === 'active';
             document.getElementById('lock-icon').textContent = isActive ? '🔒' : '🔓';
             document.getElementById('lock-active').style.display = isActive ? 'block' : 'none';
         }
-        else if (part.startsWith('DOOR:')) {
-            const isOpen = part.substring(5).trim() === 'open';
+        else if (cleanKey === 'DOOR') {
+            const isOpen = cleanValue === 'open';
             const doorSpan = document.querySelector('#door-status span');
             if (doorSpan) {
                 doorSpan.textContent = isOpen ? 'Открыта' : 'Закрыта';
                 doorSpan.className = isOpen ? 'door-open' : 'door-closed';
             }
         }
-        else if (part.startsWith('HOLD:')) {
-            const time = part.substring(5).trim();
-            document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${time} мс`;
+        else if (cleanKey === 'HOLD') {
+            document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${cleanValue} мс`;
+            // Обновляем время для кнопки
+            const holdTime = parseInt(cleanValue);
+            if (!isNaN(holdTime)) {
+                const button = document.getElementById('k10-button');
+                if (button) button.setAttribute('data-hold-time', holdTime);
+            }
         }
     });
 }
@@ -652,4 +707,21 @@ function handleDisconnect() {
         const el = document.getElementById(id);
         if (el) el.remove();
     });
+}
+
+// Добавьте эту функцию для принудительного чтения статуса
+async function forceReadK10Status() {
+    if (!characteristics.k10) return;
+    
+    try {
+        // Сначала пробуем прочитать
+        await readK10Status();
+    } catch (e) {
+        // Если не получается, пробуем записать запрос статуса
+        try {
+            const encoder = new TextEncoder();
+            await characteristics.k10.writeValue(encoder.encode('STATUS'));
+            setTimeout(() => readK10Status(), 500);
+        } catch (e) {}
+    }
 }
