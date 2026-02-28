@@ -18,7 +18,7 @@ let gattServer = null;
 let service = null;
 let characteristics = {};
 let pollingInterval = null;
-let isReadingK10 = false; // Флаг для предотвращения конфликтов
+let isReadingK10 = false;
 
 // Элементы DOM
 const statusLed = document.querySelector('.status-led');
@@ -141,16 +141,12 @@ async function connectToDevice() {
         
         // Создаем интерфейс
         createK10Section();
-
-        // Запускаем чтение K10 статуса с задержкой
-        setTimeout(() => forceReadK10Status(), 1000);
-        setTimeout(() => forceReadK10Status(), 3000);
-        
-        // Запускаем опрос данных
-        startPolling();
         
         // Загружаем начальные данные
         await loadAllData();
+        
+        // Запускаем опрос данных
+        startPolling();
         
     } catch (error) {
         log(`❌ Ошибка: ${error.message}`, 'error');
@@ -191,31 +187,16 @@ async function findCharacteristics() {
 // Чтение данных
 // =========================================================================
 
-function readData(value) {
+function readString(value) {
     try {
-        // Пробуем прочитать как строку
         const decoder = new TextDecoder('utf-8');
         let str = decoder.decode(value);
-        
-        // Очищаем от непечатных символов, но сохраняем буквы и цифры
+        // Очищаем от непечатных символов
         str = str.replace(/[^\x20-\x7E]/g, '');
-        
-        if (str && str.length > 0) {
-            return { type: 'string', value: str };
-        }
-    } catch (e) {}
-    
-    try {
-        // Пробуем прочитать как float
-        if (value.byteLength >= 4) {
-            const floatVal = value.getFloat32(0, true);
-            if (!isNaN(floatVal) && isFinite(floatVal) && Math.abs(floatVal) > 0.001) {
-                return { type: 'float', value: floatVal };
-            }
-        }
-    } catch (e) {}
-    
-    return null;
+        return str || null;
+    } catch (e) {
+        return null;
+    }
 }
 
 // =========================================================================
@@ -227,17 +208,12 @@ async function loadAllData() {
     if (characteristics.currentTemp) {
         try {
             const value = await characteristics.currentTemp.readValue();
-            const data = readData(value);
-            if (data) {
-                if (data.type === 'float') {
-                    log(`🌡️ Temp: ${data.value.toFixed(1)}°C`);
-                    updateTempDisplay(data.value);
-                } else if (data.type === 'string' && data.value.startsWith('T:')) {
-                    const num = parseFloat(data.value.substring(2));
-                    if (!isNaN(num)) {
-                        log(`🌡️ Temp str: ${num.toFixed(1)}°C`);
-                        updateTempDisplay(num);
-                    }
+            const str = readString(value);
+            if (str && str.startsWith('T:')) {
+                const num = parseFloat(str.substring(2));
+                if (!isNaN(num)) {
+                    log(`🌡️ Temp: ${num.toFixed(1)}°C`);
+                    updateTempDisplay(num);
                 }
             }
         } catch (e) {
@@ -249,17 +225,12 @@ async function loadAllData() {
     if (characteristics.currentHum) {
         try {
             const value = await characteristics.currentHum.readValue();
-            const data = readData(value);
-            if (data) {
-                if (data.type === 'float') {
-                    log(`💧 Hum: ${data.value.toFixed(1)}%`);
-                    updateHumDisplay(data.value);
-                } else if (data.type === 'string' && data.value.startsWith('H:')) {
-                    const num = parseFloat(data.value.substring(2));
-                    if (!isNaN(num)) {
-                        log(`💧 Hum str: ${num.toFixed(1)}%`);
-                        updateHumDisplay(num);
-                    }
+            const str = readString(value);
+            if (str && str.startsWith('H:')) {
+                const num = parseFloat(str.substring(2));
+                if (!isNaN(num)) {
+                    log(`💧 Hum: ${num.toFixed(1)}%`);
+                    updateHumDisplay(num);
                 }
             }
         } catch (e) {
@@ -267,27 +238,56 @@ async function loadAllData() {
         }
     }
     
-    // Загружаем K10 статус (с задержкой)
-    setTimeout(() => readK10Status(), 500);
-    
     // Загружаем настройки
     if (characteristics.allSettings) {
         try {
             const value = await characteristics.allSettings.readValue();
-            const data = readData(value);
-            if (data && data.type === 'string') {
-                log(`⚙️ Settings: ${data.value.substring(0, 50)}...`);
-                parseAndDisplaySettings(data.value);
+            const str = readString(value);
+            if (str) {
+                log(`⚙️ Settings: ${str.substring(0, 50)}...`);
+                parseAndDisplaySettings(str);
             }
         } catch (e) {
             log(`❌ Settings ошибка: ${e.message}`, 'error');
         }
     }
+    
+    // Загружаем K10 статус
+    setTimeout(() => readK10Status(), 500);
 }
 
 // =========================================================================
-// Чтение K10 статуса (с защитой от конфликтов)
+// K10 функции
 // =========================================================================
+
+// Объявляем sendK10Command в глобальной области видимости
+async function sendK10Command(cmd) {
+    if (!characteristics.k10) {
+        log('❌ K10 характеристика не найдена', 'error');
+        return false;
+    }
+    
+    try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(cmd);
+        
+        if (data.byteLength > 20) {
+            log('❌ K10 команда слишком длинная', 'error');
+            return false;
+        }
+        
+        await characteristics.k10.writeValue(data);
+        log(`📤 K10: ${cmd}`);
+        
+        // После записи читаем статус
+        setTimeout(() => readK10Status(), 300);
+        return true;
+        
+    } catch (e) {
+        log(`❌ K10 ошибка: ${e.message}`, 'error');
+        return false;
+    }
+}
 
 async function readK10Status() {
     if (!characteristics.k10 || isReadingK10) return;
@@ -296,38 +296,13 @@ async function readK10Status() {
     
     try {
         const value = await characteristics.k10.readValue();
+        const str = readString(value);
         
-        // Пробуем разные способы декодирования
-        let data = null;
-        
-        // Способ 1: как строку
-        try {
-            const decoder = new TextDecoder('utf-8');
-            const str = decoder.decode(value);
-            if (str && str.length > 0 && str.includes(',')) {
-                data = str;
-            }
-        } catch (e) {}
-        
-        // Способ 2: как ASCII (побайтово)
-        if (!data) {
-            let str = '';
-            for (let i = 0; i < value.byteLength; i++) {
-                const byte = value.getUint8(i);
-                if (byte >= 32 && byte <= 126) { // печатные ASCII
-                    str += String.fromCharCode(byte);
-                }
-            }
-            if (str && str.includes(',')) {
-                data = str;
-            }
-        }
-        
-        if (data) {
-            log(`🔒 K10: ${data}`);
-            parseK10Status(data);
+        if (str) {
+            log(`🔒 K10: ${str}`);
+            parseK10Status(str);
         } else {
-            // Если данные не читаются, пробуем записать и прочитать
+            // Если не получилось прочитать, пробуем запросить статус
             await sendK10Command('STATUS');
         }
         
@@ -340,102 +315,35 @@ async function readK10Status() {
     }
 }
 
-// =========================================================================
-// Опрос данных по таймеру
-// =========================================================================
-
-function startPolling() {
-    if (pollingInterval) clearInterval(pollingInterval);
+function parseK10Status(data) {
+    if (!data) return;
     
-    let k10ReadCount = 0;
-    
-    pollingInterval = setInterval(async () => {
-        if (!gattServer?.connected) return;
+    const parts = data.split(',');
+    parts.forEach(part => {
+        const [key, value] = part.split(':');
+        if (!key || !value) return;
         
-        // Читаем температуру (как строку)
-        if (characteristics.currentTemp) {
-            try {
-                const value = await characteristics.currentTemp.readValue();
-                const decoder = new TextDecoder('utf-8');
-                const str = decoder.decode(value);
-                if (str && str.startsWith('T:')) {
-                    const num = parseFloat(str.substring(2));
-                    if (!isNaN(num)) {
-                        updateTempDisplay(num);
-                    }
-                }
-            } catch (e) {}
+        const cleanKey = key.trim();
+        const cleanValue = value.trim();
+        
+        if (cleanKey === 'LOCK') {
+            const isActive = cleanValue === 'active';
+            document.getElementById('lock-icon').textContent = isActive ? '🔒' : '🔓';
+            document.getElementById('lock-active').style.display = isActive ? 'block' : 'none';
         }
-        
-        // Читаем влажность (как строку)
-        if (characteristics.currentHum) {
-            try {
-                const value = await characteristics.currentHum.readValue();
-                const decoder = new TextDecoder('utf-8');
-                const str = decoder.decode(value);
-                if (str && str.startsWith('H:')) {
-                    const num = parseFloat(str.substring(2));
-                    if (!isNaN(num)) {
-                        updateHumDisplay(num);
-                        log(`💧 Hum: ${num.toFixed(1)}%`);
-                    }
-                }
-            } catch (e) {}
+        else if (cleanKey === 'DOOR') {
+            const isOpen = cleanValue === 'open';
+            const doorSpan = document.querySelector('#door-status span');
+            if (doorSpan) {
+                doorSpan.textContent = isOpen ? 'Открыта' : 'Закрыта';
+                doorSpan.className = isOpen ? 'door-open' : 'door-closed';
+            }
         }
-        
-        // Читаем K10 (каждый 2-й раз)
-        k10ReadCount++;
-        if (k10ReadCount % 2 === 0 && characteristics.k10) {
-            await readK10Status();
+        else if (cleanKey === 'HOLD') {
+            document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${cleanValue} мс`;
         }
-        
-    }, 3000);
+    });
 }
-
-// =========================================================================
-// Отображение данных
-// =========================================================================
-
-function updateTempDisplay(temp) {
-    let el = document.getElementById('temp-display');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'temp-display';
-        el.className = 'sensor-card';
-        document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
-    }
-    
-    const value = (temp !== null && !isNaN(temp) && Math.abs(temp) > 0.01) ? temp.toFixed(1) : '--';
-    el.innerHTML = `
-        <div class="sensor-label">🌡️ Температура</div>
-        <div class="sensor-value">${value}°C</div>
-    `;
-}
-
-function updateHumDisplay(hum) {
-    let el = document.getElementById('hum-display');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'hum-display';
-        el.className = 'sensor-card';
-        const tempEl = document.getElementById('temp-display');
-        if (tempEl) {
-            tempEl.parentNode.insertBefore(el, tempEl.nextSibling);
-        } else {
-            document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
-        }
-    }
-    
-    const value = (hum !== null && !isNaN(hum) && hum > 0.01) ? hum.toFixed(1) : '--';
-    el.innerHTML = `
-        <div class="sensor-label">💧 Влажность</div>
-        <div class="sensor-value">${value}%</div>
-    `;
-}
-
-// =========================================================================
-// K10 функции
-// =========================================================================
 
 function createK10Section() {
     if (document.getElementById('k10-section')) return;
@@ -483,33 +391,6 @@ function setupK10Button() {
         releasePress();
     });
     
-    async function sendK10Command(cmd) {
-        if (!characteristics.k10) {
-            log('❌ K10 характеристика не найдена', 'error');
-            return;
-        }
-        
-        try {
-            const encoder = new TextEncoder();
-            const data = encoder.encode(cmd);
-            
-            // Убедимся что данные не слишком длинные
-            if (data.byteLength > 20) {
-                log('❌ K10 команда слишком длинная', 'error');
-                return;
-            }
-            
-            await characteristics.k10.writeValue(data);
-            log(`📤 K10: ${cmd}`);
-            
-            // После записи читаем статус
-            setTimeout(() => readK10Status(), 300);
-            
-        } catch (e) {
-            log(`❌ K10 ошибка: ${e.message}`, 'error');
-        }
-    }
-    
     function startPress() {
         if (isPressed) return;
         isPressed = true;
@@ -539,42 +420,45 @@ function setupK10Button() {
     }
 }
 
-function parseK10Status(data) {
-    if (!data) return;
+// =========================================================================
+// Отображение данных
+// =========================================================================
+
+function updateTempDisplay(temp) {
+    let el = document.getElementById('temp-display');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'temp-display';
+        el.className = 'sensor-card';
+        document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
+    }
     
-    log(`📊 Парсинг K10: ${data}`);
+    const value = (temp !== null && !isNaN(temp) && temp > -50) ? temp.toFixed(1) : '--';
+    el.innerHTML = `
+        <div class="sensor-label">🌡️ Температура</div>
+        <div class="sensor-value">${value}°C</div>
+    `;
+}
+
+function updateHumDisplay(hum) {
+    let el = document.getElementById('hum-display');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'hum-display';
+        el.className = 'sensor-card';
+        const tempEl = document.getElementById('temp-display');
+        if (tempEl) {
+            tempEl.parentNode.insertBefore(el, tempEl.nextSibling);
+        } else {
+            document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
+        }
+    }
     
-    const parts = data.split(',');
-    parts.forEach(part => {
-        const [key, value] = part.split(':');
-        if (!key || !value) return;
-        
-        const cleanKey = key.trim();
-        const cleanValue = value.trim();
-        
-        if (cleanKey === 'LOCK') {
-            const isActive = cleanValue === 'active';
-            document.getElementById('lock-icon').textContent = isActive ? '🔒' : '🔓';
-            document.getElementById('lock-active').style.display = isActive ? 'block' : 'none';
-        }
-        else if (cleanKey === 'DOOR') {
-            const isOpen = cleanValue === 'open';
-            const doorSpan = document.querySelector('#door-status span');
-            if (doorSpan) {
-                doorSpan.textContent = isOpen ? 'Открыта' : 'Закрыта';
-                doorSpan.className = isOpen ? 'door-open' : 'door-closed';
-            }
-        }
-        else if (cleanKey === 'HOLD') {
-            document.getElementById('hold-time').innerHTML = `⏱️ Время удержания: ${cleanValue} мс`;
-            // Обновляем время для кнопки
-            const holdTime = parseInt(cleanValue);
-            if (!isNaN(holdTime)) {
-                const button = document.getElementById('k10-button');
-                if (button) button.setAttribute('data-hold-time', holdTime);
-            }
-        }
-    });
+    const value = (hum !== null && !isNaN(hum) && hum > 0) ? hum.toFixed(1) : '--';
+    el.innerHTML = `
+        <div class="sensor-label">💧 Влажность</div>
+        <div class="sensor-value">${value}%</div>
+    `;
 }
 
 // =========================================================================
@@ -636,25 +520,6 @@ function parseAndDisplaySettings(data) {
     }
     html += '</div>';
     
-    // Таймауты
-    html += '<div class="settings-group"><h3>⏱️ Таймауты</h3>';
-    const lockNames = ["ОТКЛ", "30 сек", "1 мин", "2 мин", "5 мин"];
-    if (settings.lockTimeIndex !== undefined) {
-        const idx = parseInt(settings.lockTimeIndex);
-        html += `<div class="setting-item">🔐 Блокировка: <strong>${lockNames[idx] || '?'}</strong></div>`;
-    }
-    const menuNames = ["ОТКЛ", "15 сек", "30 сек", "1 мин", "2 мин"];
-    if (settings.menuTimeoutOptionIndex !== undefined) {
-        const idx = parseInt(settings.menuTimeoutOptionIndex);
-        html += `<div class="setting-item">📱 Таймаут меню: <strong>${menuNames[idx] || '?'}</strong></div>`;
-    }
-    const screenNames = ["ОТКЛ", "30 сек", "1 мин", "5 мин", "10 мин"];
-    if (settings.screenTimeoutOptionIndex !== undefined) {
-        const idx = parseInt(settings.screenTimeoutOptionIndex);
-        html += `<div class="setting-item">🖥️ Таймаут экрана: <strong>${screenNames[idx] || '?'}</strong></div>`;
-    }
-    html += '</div>';
-    
     // Кнопка обновления
     html += `
         <div class="button-group">
@@ -665,6 +530,55 @@ function parseAndDisplaySettings(data) {
     el.innerHTML = html;
     
     document.getElementById('refresh-settings').onclick = () => loadAllData();
+}
+
+// =========================================================================
+// Опрос данных по таймеру
+// =========================================================================
+
+function startPolling() {
+    if (pollingInterval) clearInterval(pollingInterval);
+    
+    let k10ReadCount = 0;
+    
+    pollingInterval = setInterval(async () => {
+        if (!gattServer?.connected) return;
+        
+        // Читаем температуру
+        if (characteristics.currentTemp) {
+            try {
+                const value = await characteristics.currentTemp.readValue();
+                const str = readString(value);
+                if (str && str.startsWith('T:')) {
+                    const num = parseFloat(str.substring(2));
+                    if (!isNaN(num) && num > -50) {
+                        updateTempDisplay(num);
+                    }
+                }
+            } catch (e) {}
+        }
+        
+        // Читаем влажность
+        if (characteristics.currentHum) {
+            try {
+                const value = await characteristics.currentHum.readValue();
+                const str = readString(value);
+                if (str && str.startsWith('H:')) {
+                    const num = parseFloat(str.substring(2));
+                    if (!isNaN(num) && num > 0) {
+                        updateHumDisplay(num);
+                    }
+                }
+            } catch (e) {}
+        }
+        
+        // Читаем K10 (каждый 2-й раз)
+        k10ReadCount++;
+        if (k10ReadCount % 2 === 0 && characteristics.k10) {
+            await readK10Status();
+        }
+        
+    }, 3000);
 }
 
 // =========================================================================
@@ -711,21 +625,4 @@ function handleDisconnect() {
         const el = document.getElementById(id);
         if (el) el.remove();
     });
-}
-
-// Добавьте эту функцию для принудительного чтения статуса
-async function forceReadK10Status() {
-    if (!characteristics.k10) return;
-    
-    try {
-        // Сначала пробуем прочитать
-        await readK10Status();
-    } catch (e) {
-        // Если не получается, пробуем записать запрос статуса
-        try {
-            const encoder = new TextEncoder();
-            await characteristics.k10.writeValue(encoder.encode('STATUS'));
-            setTimeout(() => readK10Status(), 500);
-        } catch (e) {}
-    }
 }
