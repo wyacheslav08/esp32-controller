@@ -141,6 +141,10 @@ async function connectToDevice() {
         
         // Создаем интерфейс
         createK10Section();
+
+        // Запускаем чтение K10 статуса с задержкой
+        setTimeout(() => forceReadK10Status(), 1000);
+        setTimeout(() => forceReadK10Status(), 3000);
         
         // Запускаем опрос данных
         startPolling();
