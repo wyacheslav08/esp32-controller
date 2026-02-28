@@ -554,13 +554,19 @@ async function subscribeToNotifications() {
         const char = characteristics[charName];
         if (char) {
             try {
-                await char.startNotifications();
-                
-                char.addEventListener('characteristicvaluechanged', (event) => {
-                    handleNotification(charName, event.target.value);
-                });
-                
-                log(`  ✅ ${charName} уведомления активированы`);
+                // Проверяем, поддерживает ли характеристика уведомления
+                const properties = char.properties;
+                if (properties & 0x10) { // 0x10 = NOTIFY
+                    await char.startNotifications();
+                    
+                    char.addEventListener('characteristicvaluechanged', (event) => {
+                        handleNotification(charName, event.target.value);
+                    });
+                    
+                    log(`  ✅ ${charName} уведомления активированы`);
+                } else {
+                    log(`  ⚠️ ${charName} не поддерживает уведомления`, 'warning');
+                }
             } catch (e) {
                 log(`  ❌ ${charName} уведомления не активированы: ${e.message}`, 'error');
             }
@@ -904,23 +910,6 @@ async function requestK10Status() {
     }
 }
 
-function parseK10Status(data) {
-    const parts = data.split(',');
-    
-    parts.forEach(part => {
-        if (part.startsWith('LOCK:')) {
-            updateLockStatus(part.substring(5));
-        } else if (part.startsWith('DOOR:')) {
-            updateDoorStatus(part.substring(5));
-        } else if (part.startsWith('HOLD:')) {
-            const holdTime = document.getElementById('hold-time');
-            if (holdTime) {
-                holdTime.textContent = part.substring(5) + ' мс';
-            }
-        }
-    });
-}
-
 function updateLockStatus(status) {
     const lockIcon = document.getElementById('lock-status-icon');
     const lockIndicator = document.getElementById('lock-active-indicator');
@@ -1208,21 +1197,6 @@ function parseAndDisplaySettings(data) {
                     <input type="range" id="${param.key}-slider" min="-20" max="20" value="${value}">
                 </div>
             `;
-        }
-    });
-    html += '</div>';
-    
-    // ========== СТАТИСТИКА ==========
-    html += '<div class="settings-group"><h3>📊 Статистика</h3>';
-    
-    const stats = [
-        { key: 'wdtResetCount', label: '🔄 Перезагрузок по WDT', icon: '⚠️' },
-        { key: 'rebootCounter', label: '🔁 Плановых перезагрузок', icon: '📅' }
-    ];
-    
-    stats.forEach(stat => {
-        if (settings[stat.key] !== undefined) {
-            html += `<div class="stat-item">${stat.icon} ${stat.label}: <strong>${settings[stat.key]}</strong></div>`;
         }
     });
     html += '</div>';
