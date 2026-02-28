@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface for Guitar Cabinet Controller - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// BLE Web Interface for Guitar Cabinet Controller - ПОЛНАЯ РАБОЧАЯ ВЕРСИЯ
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -10,7 +10,6 @@ const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
 const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
 const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
-
 
 // Глобальные переменные
 let bluetoothDevice = null;
@@ -278,6 +277,102 @@ function addStyles() {
             color: #f44336;
             font-weight: bold;
         }
+
+        /* Новые стили для групп настроек */
+        .settings-group {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .settings-group h3 {
+            margin: 0 0 15px 0;
+            color: #2196f3;
+            font-size: 16px;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 5px;
+        }
+
+        .checkbox {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .checkbox input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+        }
+
+        .status-indicator {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .setting-hint {
+            display: block;
+            color: #666;
+            font-size: 11px;
+            margin-top: 3px;
+        }
+
+        .stat-item {
+            padding: 5px 0;
+            border-bottom: 1px dashed #e0e0e0;
+        }
+
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn-primary {
+            background: #4caf50;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #388e3c;
+        }
+
+        .btn-secondary {
+            background: #2196f3;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #1976d2;
+        }
+
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #d32f2f;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
     `;
     
     const styleSheet = document.createElement('style');
@@ -385,10 +480,6 @@ async function connectToDevice() {
     }
 }
 
-// =========================================================================
-// ИСПРАВЛЕННАЯ ФУНКЦИЯ discoverCharacteristics
-// =========================================================================
-
 async function discoverCharacteristics() {
     log('Поиск характеристик...');
     
@@ -436,7 +527,10 @@ async function discoverCharacteristics() {
 async function subscribeToNotifications() {
     log('Настройка уведомлений...');
     
-    const notifyChars = ['currentTemp', 'currentHum', 'sysInfo'];
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Подписываемся на ВСЕ характеристики с уведомлениями
+    const notifyChars = ['currentTemp', 'currentHum', 'sysInfo', 'allSettings', 'k10'];
     
     for (const charName of notifyChars) {
         const char = characteristics[charName];
@@ -481,11 +575,16 @@ function handleNotification(charName, value) {
             if (data.startsWith('E:')) {
                 const eff = parseFloat(data.substring(2));
                 updateEfficiencyDisplay(eff);
-            } else if (data.startsWith('LOCK:')) {
-                updateLockStatus(data.substring(5));
-            } else if (data.startsWith('DOOR:')) {
-                updateDoorStatus(data.substring(5));
             }
+            break;
+            
+        case 'k10':
+            parseK10Status(data);
+            break;
+            
+        case 'allSettings':
+            log('🔄 Настройки изменены на устройстве, обновляем...');
+            parseAndDisplaySettings(data);
             break;
     }
 }
@@ -495,7 +594,7 @@ async function disconnectFromDevice() {
         try {
             log('🔌 Отключение...');
             
-            for (const charName of ['currentTemp', 'currentHum', 'sysInfo']) {
+            for (const charName of ['currentTemp', 'currentHum', 'sysInfo', 'allSettings', 'k10']) {
                 const char = characteristics[charName];
                 if (char) {
                     try {
@@ -807,7 +906,7 @@ function updateDoorStatus(status) {
 }
 
 // =========================================================================
-// Функции работы с настройками
+// Функции работы с настройками - ПОЛНАЯ ВЕРСИЯ
 // =========================================================================
 
 async function requestInitialData() {
@@ -857,13 +956,17 @@ function parseAndDisplaySettings(data) {
     
     log('📊 Получены настройки:', settings);
     
-    let html = '<h2>⚙️ Настройки</h2>';
+    let html = '<h2>⚙️ Настройки системы</h2>';
+    
+    // ========== ОСНОВНЫЕ НАСТРОЙКИ ==========
+    html += '<div class="settings-group"><h3>🎯 Основные</h3>';
     
     if (settings.targetHumidity) {
         html += `
             <div class="setting-item">
-                <label>🎯 Целевая влажность: <span id="target-hum-value">${settings.targetHumidity}%</span></label>
+                <label>🌡️ Целевая влажность: <span id="target-hum-value">${settings.targetHumidity}%</span></label>
                 <input type="range" id="target-hum-slider" min="0" max="100" value="${settings.targetHumidity}">
+                <span class="setting-hint">Желаемый уровень влажности</span>
             </div>
         `;
     }
@@ -873,102 +976,173 @@ function parseAndDisplaySettings(data) {
             <div class="setting-item">
                 <label>🔒 Время удержания замка: <span id="lock-hold-value">${settings.lockHoldTime} мс</span></label>
                 <input type="range" id="lock-hold-slider" min="100" max="5000" step="100" value="${settings.lockHoldTime}">
+                <span class="setting-hint">Сколько держать K10 для активации замка</span>
             </div>
         `;
     }
-
-    // В функции parseAndDisplaySettings(), после блока с lockHoldTime:
-
-// Звуковые настройки
-html += '<div class="setting-item"><label>🔊 Звуковые оповещения:</label>';
-if (settings.doorSoundEnabled !== undefined) {
-    html += `<div>🚪 Дверь: <span class="${settings.doorSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.doorSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
-}
-if (settings.waterSilicaSoundEnabled !== undefined) {
-    html += `<div>💧 Ресурсы: <span class="${settings.waterSilicaSoundEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterSilicaSoundEnabled === '1' ? 'ВКЛ' : 'ВЫКЛ'}</span></div>`;
-}
-html += '</div>';
-
-// Подогрев воды
-if (settings.waterHeaterEnabled !== undefined) {
-    html += `
-        <div class="setting-item">
-            <label>💧 Подогрев воды:</label>
-            <div>Статус: <span class="${settings.waterHeaterEnabled === '1' ? 'status-on' : 'status-off'}">${settings.waterHeaterEnabled === '1' ? 'ВКЛ 🔥' : 'ВЫКЛ ❄️'}</span></div>
-    `;
+    html += '</div>';
+    
+    // ========== ЗВУКОВЫЕ НАСТРОЙКИ ==========
+    html += '<div class="settings-group"><h3>🔊 Звуковые оповещения</h3>';
+    
+    const soundOptions = [
+        { key: 'doorSoundEnabled', label: '🚪 Сигнал открытой двери' },
+        { key: 'waterSilicaSoundEnabled', label: '💧 Сигнал отсутствия воды/силикагеля' }
+    ];
+    
+    soundOptions.forEach(opt => {
+        if (settings[opt.key] !== undefined) {
+            const isEnabled = settings[opt.key] === '1';
+            html += `
+                <div class="setting-item checkbox">
+                    <label>
+                        <input type="checkbox" id="${opt.key}" ${isEnabled ? 'checked' : ''}>
+                        ${opt.label}
+                    </label>
+                    <span class="status-indicator ${isEnabled ? 'status-on' : 'status-off'}">
+                        ${isEnabled ? 'ВКЛ' : 'ВЫКЛ'}
+                    </span>
+                </div>
+            `;
+        }
+    });
+    html += '</div>';
+    
+    // ========== ПОДОГРЕВ ВОДЫ ==========
+    html += '<div class="settings-group"><h3>💧 Подогрев воды</h3>';
+    
+    if (settings.waterHeaterEnabled !== undefined) {
+        const isEnabled = settings.waterHeaterEnabled === '1';
+        html += `
+            <div class="setting-item checkbox">
+                <label>
+                    <input type="checkbox" id="waterHeaterEnabled" ${isEnabled ? 'checked' : ''}>
+                    Включить подогрев
+                </label>
+                <span class="status-indicator ${isEnabled ? 'status-on' : 'status-off'}">
+                    ${isEnabled ? 'ВКЛ 🔥' : 'ВЫКЛ ❄️'}
+                </span>
+            </div>
+        `;
+    }
+    
     if (settings.waterHeaterMaxTemp) {
-        html += `<div>Макс. температура: ${settings.waterHeaterMaxTemp}°C</div>`;
+        html += `
+            <div class="setting-item">
+                <label>🌡️ Макс. температура: <span id="water-temp-value">${settings.waterHeaterMaxTemp}°C</span></label>
+                <input type="range" id="water-temp-slider" min="20" max="40" value="${settings.waterHeaterMaxTemp}">
+                <span class="setting-hint">Безопасный предел нагрева</span>
+            </div>
+        `;
     }
     html += '</div>';
-}
-
-// Таймауты
-html += '<div class="setting-item"><label>⏱️ Таймауты:</label>';
-
-const lockTimeNames = ["ОТКЛ", "30 сек", "1 мин", "2 мин", "5 мин"];
-if (settings.lockTimeIndex !== undefined) {
-    const index = parseInt(settings.lockTimeIndex);
-    html += `<div>🔐 Блокировка меню: ${lockTimeNames[index] || settings.lockTimeIndex}</div>`;
-}
-
-const menuTimeoutNames = ["ОТКЛ", "15 сек", "30 сек", "1 мин", "2 мин"];
-if (settings.menuTimeoutOptionIndex !== undefined) {
-    const index = parseInt(settings.menuTimeoutOptionIndex);
-    html += `<div>📱 Таймаут меню: ${menuTimeoutNames[index] || settings.menuTimeoutOptionIndex}</div>`;
-}
-
-const screenTimeoutNames = ["ОТКЛ", "30 сек", "1 мин", "5 мин", "10 мин"];
-if (settings.screenTimeoutOptionIndex !== undefined) {
-    const index = parseInt(settings.screenTimeoutOptionIndex);
-    html += `<div>🖥️ Таймаут экрана: ${screenTimeoutNames[index] || settings.screenTimeoutOptionIndex}</div>`;
-}
-html += '</div>';
-
-// Логика влажности
-html += '<div class="setting-item"><label>💧 Логика влажности:</label>';
-if (settings.deadZonePercent) {
-    html += `<div>📊 Мертвая зона: ${parseFloat(settings.deadZonePercent).toFixed(1)}%</div>`;
-}
-if (settings.minHumidityChange) {
-    html += `<div>📈 Мин. изменение: ${parseFloat(settings.minHumidityChange).toFixed(1)}%</div>`;
-}
-if (settings.maxOperationDuration) {
-    html += `<div>⏱️ Макс. время работы: ${settings.maxOperationDuration} мин</div>`;
-}
-if (settings.operationCooldown) {
-    html += `<div>😴 Время отдыха: ${settings.operationCooldown} мин</div>`;
-}
-if (settings.maxSafeHumidity) {
-    html += `<div>⚠️ Макс. безопасная влажность: ${settings.maxSafeHumidity}%</div>`;
-}
-if (settings.resourceCheckDiff) {
-    html += `<div>🔄 Порог проверки ресурсов: ${settings.resourceCheckDiff}%</div>`;
-}
-if (settings.hysteresis) {
-    html += `<div>📉 Гистерезис: ${parseFloat(settings.hysteresis).toFixed(1)}%</div>`;
-}
-if (settings.lowFaultThreshold) {
-    html += `<div>⚠️ Порог "мало": ${settings.lowFaultThreshold}</div>`;
-}
-if (settings.emptyFaultThreshold) {
-    html += `<div>⛔ Порог "пусто": ${settings.emptyFaultThreshold}</div>`;
-}
-html += '</div>';
-
-// Статистика
-html += '<div class="setting-item"><label>📊 Статистика:</label>';
-if (settings.wdtResetCount) {
-    html += `<div>🔄 Перезагрузок по WDT: ${settings.wdtResetCount}</div>`;
-}
-if (settings.rebootCounter) {
-    html += `<div>🔁 Плановых перезагрузок: ${settings.rebootCounter}</div>`;
-}
-html += '</div>';
     
+    // ========== ТАЙМАУТЫ ==========
+    html += '<div class="settings-group"><h3>⏱️ Таймауты</h3>';
+    
+    const timeoutGroups = [
+        { key: 'lockTimeIndex', name: '🔐 Блокировка меню', options: ["ОТКЛ", "30 сек", "1 мин", "2 мин", "5 мин"] },
+        { key: 'menuTimeoutOptionIndex', name: '📱 Таймаут меню', options: ["ОТКЛ", "15 сек", "30 сек", "1 мин", "2 мин"] },
+        { key: 'screenTimeoutOptionIndex', name: '🖥️ Таймаут экрана', options: ["ОТКЛ", "30 сек", "1 мин", "5 мин", "10 мин"] }
+    ];
+    
+    timeoutGroups.forEach(group => {
+        if (settings[group.key] !== undefined) {
+            const index = parseInt(settings[group.key]);
+            html += `
+                <div class="setting-item">
+                    <label>${group.name}:</label>
+                    <select id="${group.key}">
+                        ${group.options.map((opt, i) => 
+                            `<option value="${i}" ${i === index ? 'selected' : ''}>${opt}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+            `;
+        }
+    });
+    html += '</div>';
+    
+    // ========== ЛОГИКА ВЛАЖНОСТИ ==========
+    html += '<div class="settings-group"><h3>💧 Логика влажности</h3>';
+    
+    const logicParams = [
+        { key: 'deadZonePercent', label: '📊 Мертвая зона', unit: '%', min: 0.5, max: 5, step: 0.1, multiplier: 10 },
+        { key: 'minHumidityChange', label: '📈 Мин. изменение', unit: '%', min: 0.5, max: 5, step: 0.1, multiplier: 10 },
+        { key: 'maxOperationDuration', label: '⏱️ Макс. время работы', unit: 'мин', min: 1, max: 60, step: 1 },
+        { key: 'operationCooldown', label: '😴 Время отдыха', unit: 'мин', min: 1, max: 30, step: 1 },
+        { key: 'maxSafeHumidity', label: '⚠️ Макс. безопасная влажность', unit: '%', min: 50, max: 100, step: 1 },
+        { key: 'resourceCheckDiff', label: '🔄 Порог проверки ресурсов', unit: '%', min: 1, max: 20, step: 1 },
+        { key: 'hysteresis', label: '📉 Гистерезис', unit: '%', min: 0.5, max: 5, step: 0.1, multiplier: 10 },
+        { key: 'lowFaultThreshold', label: '⚠️ Порог "мало"', unit: '', min: 1, max: 10, step: 1 },
+        { key: 'emptyFaultThreshold', label: '⛔ Порог "пусто"', unit: '', min: 1, max: 20, step: 1 }
+    ];
+    
+    logicParams.forEach(param => {
+        if (settings[param.key] !== undefined) {
+            let value = parseFloat(settings[param.key]);
+            let displayValue = value;
+            
+            if (param.multiplier) {
+                displayValue = (value / param.multiplier).toFixed(1);
+            }
+            
+            html += `
+                <div class="setting-item">
+                    <label>${param.label}: <span id="${param.key}-value">${displayValue}${param.unit}</span></label>
+                    <input type="range" id="${param.key}-slider" 
+                           min="${param.min}" max="${param.max}" step="${param.step}" 
+                           value="${displayValue}">
+                </div>
+            `;
+        }
+    });
+    html += '</div>';
+    
+    // ========== КАЛИБРОВКА ДАТЧИКОВ ==========
+    html += '<div class="settings-group"><h3>📏 Калибровка DHT</h3>';
+    
+    const calParams = [
+        { key: 'tempOffsetTop', label: '🌡️ Температура (верх)', unit: '°C' },
+        { key: 'humOffsetTop', label: '💧 Влажность (верх)', unit: '%' },
+        { key: 'tempOffsetHum', label: '🌡️ Температура (увл)', unit: '°C' },
+        { key: 'humOffsetHum', label: '💧 Влажность (увл)', unit: '%' }
+    ];
+    
+    calParams.forEach(param => {
+        if (settings[param.key] !== undefined) {
+            const value = parseInt(settings[param.key]);
+            html += `
+                <div class="setting-item">
+                    <label>${param.label}: <span id="${param.key}-value">${value > 0 ? '+' : ''}${value}${param.unit}</span></label>
+                    <input type="range" id="${param.key}-slider" min="-20" max="20" value="${value}">
+                </div>
+            `;
+        }
+    });
+    html += '</div>';
+    
+    // ========== СТАТИСТИКА ==========
+    html += '<div class="settings-group"><h3>📊 Статистика</h3>';
+    
+    const stats = [
+        { key: 'wdtResetCount', label: '🔄 Перезагрузок по WDT', icon: '⚠️' },
+        { key: 'rebootCounter', label: '🔁 Плановых перезагрузок', icon: '📅' }
+    ];
+    
+    stats.forEach(stat => {
+        if (settings[stat.key] !== undefined) {
+            html += `<div class="stat-item">${stat.icon} ${stat.label}: <strong>${settings[stat.key]}</strong></div>`;
+        }
+    });
+    html += '</div>';
+    
+    // ========== КНОПКИ УПРАВЛЕНИЯ ==========
     html += `
-        <div style="display: flex; gap: 10px; margin-top: 20px;">
-            <button id="save-all-settings" class="connect-btn" style="background: #4caf50; flex: 2;">💾 Сохранить все настройки</button>
-            <button id="refresh-settings" class="connect-btn" style="background: #2196f3; flex: 1;">🔄</button>
+        <div class="button-group">
+            <button id="save-all-settings" class="btn btn-primary">💾 Сохранить все настройки</button>
+            <button id="refresh-settings" class="btn btn-secondary">🔄 Обновить</button>
+            <button id="reset-to-defaults" class="btn btn-danger">⚠️ Сброс к заводским</button>
         </div>
     `;
     
@@ -977,30 +1151,113 @@ html += '</div>';
 }
 
 function setupSettingsHandlers(initialSettings) {
-    const saveBtn = document.getElementById('save-all-settings');
-    if (saveBtn) {
-        saveBtn.onclick = () => saveAllSettings();
+    // Кнопки
+    document.getElementById('save-all-settings').onclick = () => saveAllSettings();
+    document.getElementById('refresh-settings').onclick = () => requestInitialData();
+    
+    const resetBtn = document.getElementById('reset-to-defaults');
+    if (resetBtn) {
+        resetBtn.onclick = () => {
+            if (confirm('Сбросить все настройки к заводским?')) {
+                // TODO: Добавить отправку команды сброса
+                log('🔄 Запрос сброса настроек');
+            }
+        };
     }
     
-    const refreshBtn = document.getElementById('refresh-settings');
-    if (refreshBtn) {
-        refreshBtn.onclick = () => requestInitialData();
-    }
+    // Целевая влажность
+    setupRangeHandler('target-hum-slider', 'target-hum-value', 'targetHumidity', '%');
     
-    const humSlider = document.getElementById('target-hum-slider');
-    if (humSlider) {
-        humSlider.addEventListener('input', (e) => {
-            document.getElementById('target-hum-value').textContent = e.target.value + '%';
-            pendingSettings.targetHumidity = e.target.value;
+    // Время удержания замка
+    setupRangeHandler('lock-hold-slider', 'lock-hold-value', 'lockHoldTime', ' мс');
+    
+    // Чекбоксы звука
+    ['doorSoundEnabled', 'waterSilicaSoundEnabled', 'waterHeaterEnabled'].forEach(id => {
+        const checkbox = document.getElementById(id);
+        if (checkbox) {
+            checkbox.addEventListener('change', (e) => {
+                pendingSettings[id] = e.target.checked ? '1' : '0';
+                updateCheckboxStatus(id, e.target.checked);
+            });
+        }
+    });
+    
+    // Температура подогрева
+    setupRangeHandler('water-temp-slider', 'water-temp-value', 'waterHeaterMaxTemp', '°C');
+    
+    // Селекты таймаутов
+    ['lockTimeIndex', 'menuTimeoutOptionIndex', 'screenTimeoutOptionIndex'].forEach(id => {
+        const select = document.getElementById(id);
+        if (select) {
+            select.addEventListener('change', (e) => {
+                pendingSettings[id] = e.target.value;
+            });
+        }
+    });
+    
+    // Параметры логики влажности
+    const logicParams = [
+        { slider: 'deadZonePercent-slider', value: 'deadZonePercent-value', key: 'deadZonePercent', unit: '%', multiplier: 10 },
+        { slider: 'minHumidityChange-slider', value: 'minHumidityChange-value', key: 'minHumidityChange', unit: '%', multiplier: 10 },
+        { slider: 'maxOperationDuration-slider', value: 'maxOperationDuration-value', key: 'maxOperationDuration', unit: ' мин' },
+        { slider: 'operationCooldown-slider', value: 'operationCooldown-value', key: 'operationCooldown', unit: ' мин' },
+        { slider: 'maxSafeHumidity-slider', value: 'maxSafeHumidity-value', key: 'maxSafeHumidity', unit: '%' },
+        { slider: 'resourceCheckDiff-slider', value: 'resourceCheckDiff-value', key: 'resourceCheckDiff', unit: '%' },
+        { slider: 'hysteresis-slider', value: 'hysteresis-value', key: 'hysteresis', unit: '%', multiplier: 10 },
+        { slider: 'lowFaultThreshold-slider', value: 'lowFaultThreshold-value', key: 'lowFaultThreshold', unit: '' },
+        { slider: 'emptyFaultThreshold-slider', value: 'emptyFaultThreshold-value', key: 'emptyFaultThreshold', unit: '' }
+    ];
+    
+    logicParams.forEach(param => {
+        setupRangeHandler(param.slider, param.value, param.key, param.unit, param.multiplier);
+    });
+    
+    // Калибровка датчиков
+    const calParams = [
+        'tempOffsetTop-slider', 'humOffsetTop-slider', 
+        'tempOffsetHum-slider', 'humOffsetHum-slider'
+    ];
+    
+    calParams.forEach(sliderId => {
+        const slider = document.getElementById(sliderId);
+        if (slider) {
+            const key = sliderId.replace('-slider', '');
+            const valueSpan = document.getElementById(key + '-value');
+            
+            slider.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value);
+                valueSpan.textContent = (val > 0 ? '+' : '') + val + (key.includes('temp') ? '°C' : '%');
+                pendingSettings[key] = val;
+            });
+        }
+    });
+}
+
+// Вспомогательная функция для обработки слайдеров
+function setupRangeHandler(sliderId, valueId, settingsKey, unit, multiplier = 1) {
+    const slider = document.getElementById(sliderId);
+    const valueSpan = document.getElementById(valueId);
+    
+    if (slider && valueSpan) {
+        slider.addEventListener('input', (e) => {
+            let val = parseFloat(e.target.value);
+            if (multiplier !== 1) {
+                valueSpan.textContent = val.toFixed(1) + unit;
+                pendingSettings[settingsKey] = Math.round(val * multiplier);
+            } else {
+                valueSpan.textContent = val + unit;
+                pendingSettings[settingsKey] = val;
+            }
         });
     }
-    
-    const lockSlider = document.getElementById('lock-hold-slider');
-    if (lockSlider) {
-        lockSlider.addEventListener('input', (e) => {
-            document.getElementById('lock-hold-value').textContent = e.target.value + ' мс';
-            pendingSettings.lockHoldTime = e.target.value;
-        });
+}
+
+// Обновление статуса чекбокса
+function updateCheckboxStatus(id, checked) {
+    const statusSpan = document.querySelector(`#${id}`).closest('.checkbox').querySelector('.status-indicator');
+    if (statusSpan) {
+        statusSpan.textContent = checked ? 'ВКЛ' : 'ВЫКЛ';
+        statusSpan.className = `status-indicator ${checked ? 'status-on' : 'status-off'}`;
     }
 }
 
