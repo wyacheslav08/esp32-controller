@@ -1,5 +1,5 @@
 // =========================================================================
-// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ С БИНАРНЫМ ЧТЕНИЕМ
+// BLE Web Interface - РАБОЧАЯ ВЕРСИЯ
 // =========================================================================
 
 // UUID сервисов и характеристик
@@ -18,6 +18,7 @@ let gattServer = null;
 let service = null;
 let characteristics = {};
 let pollingInterval = null;
+let isReadingK10 = false; // Флаг для предотвращения конфликтов
 
 // Элементы DOM
 const statusLed = document.querySelector('.status-led');
@@ -74,6 +75,7 @@ function addStyles() {
         .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; }
         .btn-primary { background: #4caf50; color: white; }
         .btn-secondary { background: #2196f3; color: white; }
+        .btn-danger { background: #f44336; color: white; }
     `;
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
@@ -182,42 +184,33 @@ async function findCharacteristics() {
 }
 
 // =========================================================================
-// Чтение бинарных данных
+// Чтение данных
 // =========================================================================
 
-function readFloat(value) {
-    try {
-        // Пробуем прочитать как 32-битный float (little-endian)
-        const floatVal = value.getFloat32(0, true);
-        if (!isNaN(floatVal) && isFinite(floatVal)) {
-            return floatVal;
-        }
-    } catch (e) {}
-    return null;
-}
-
-function readInt(value) {
-    try {
-        // Пробуем прочитать как 32-битный int
-        const intVal = value.getInt32(0, true);
-        if (!isNaN(intVal)) {
-            return intVal;
-        }
-    } catch (e) {}
-    return null;
-}
-
-function readString(value) {
+function readData(value) {
     try {
         // Пробуем прочитать как строку
         const decoder = new TextDecoder('utf-8');
         let str = decoder.decode(value);
-        // Очищаем от непечатных символов
+        
+        // Очищаем от непечатных символов, но сохраняем буквы и цифры
         str = str.replace(/[^\x20-\x7E]/g, '');
-        if (str.length > 0) {
-            return str;
+        
+        if (str && str.length > 0) {
+            return { type: 'string', value: str };
         }
     } catch (e) {}
+    
+    try {
+        // Пробуем прочитать как float
+        if (value.byteLength >= 4) {
+            const floatVal = value.getFloat32(0, true);
+            if (!isNaN(floatVal) && isFinite(floatVal) && Math.abs(floatVal) > 0.001) {
+                return { type: 'float', value: floatVal };
+            }
+        }
+    } catch (e) {}
+    
     return null;
 }
 
@@ -230,55 +223,87 @@ async function loadAllData() {
     if (characteristics.currentTemp) {
         try {
             const value = await characteristics.currentTemp.readValue();
-            
-            // Пробуем как float
-            let temp = readFloat(value);
-            if (temp !== null) {
-                log(`🌡️ Temp float: ${temp.toFixed(1)}°C`);
-                updateTempDisplay(temp);
-            } else {
-                // Пробуем как строку
-                let str = readString(value);
-                if (str) log(`🌡️ Temp str: ${str}`);
+            const data = readData(value);
+            if (data) {
+                if (data.type === 'float') {
+                    log(`🌡️ Temp: ${data.value.toFixed(1)}°C`);
+                    updateTempDisplay(data.value);
+                } else if (data.type === 'string' && data.value.startsWith('T:')) {
+                    const num = parseFloat(data.value.substring(2));
+                    if (!isNaN(num)) {
+                        log(`🌡️ Temp str: ${num.toFixed(1)}°C`);
+                        updateTempDisplay(num);
+                    }
+                }
             }
-        } catch (e) {}
+        } catch (e) {
+            log(`❌ Temp ошибка: ${e.message}`, 'error');
+        }
     }
     
     // Загружаем влажность
     if (characteristics.currentHum) {
         try {
             const value = await characteristics.currentHum.readValue();
-            
-            let hum = readFloat(value);
-            if (hum !== null) {
-                log(`💧 Hum float: ${hum.toFixed(1)}%`);
-                updateHumDisplay(hum);
+            const data = readData(value);
+            if (data) {
+                if (data.type === 'float') {
+                    log(`💧 Hum: ${data.value.toFixed(1)}%`);
+                    updateHumDisplay(data.value);
+                } else if (data.type === 'string' && data.value.startsWith('H:')) {
+                    const num = parseFloat(data.value.substring(2));
+                    if (!isNaN(num)) {
+                        log(`💧 Hum str: ${num.toFixed(1)}%`);
+                        updateHumDisplay(num);
+                    }
+                }
             }
-        } catch (e) {}
+        } catch (e) {
+            log(`❌ Hum ошибка: ${e.message}`, 'error');
+        }
     }
     
-    // Загружаем K10 статус
-    if (characteristics.k10) {
-        try {
-            const value = await characteristics.k10.readValue();
-            let str = readString(value);
-            if (str) {
-                log(`🔒 K10: ${str}`);
-                parseK10Status(str);
-            }
-        } catch (e) {}
-    }
+    // Загружаем K10 статус (с задержкой)
+    setTimeout(() => readK10Status(), 500);
     
     // Загружаем настройки
     if (characteristics.allSettings) {
         try {
             const value = await characteristics.allSettings.readValue();
-            let str = readString(value);
-            if (str) {
-                log(`⚙️ Settings: ${str.substring(0, 50)}...`);
-                parseAndDisplaySettings(str);
+            const data = readData(value);
+            if (data && data.type === 'string') {
+                log(`⚙️ Settings: ${data.value.substring(0, 50)}...`);
+                parseAndDisplaySettings(data.value);
             }
-        } catch (e) {}
+        } catch (e) {
+            log(`❌ Settings ошибка: ${e.message}`, 'error');
+        }
+    }
+}
+
+// =========================================================================
+// Чтение K10 статуса (с защитой от конфликтов)
+// =========================================================================
+
+async function readK10Status() {
+    if (!characteristics.k10 || isReadingK10) return;
+    
+    isReadingK10 = true;
+    
+    try {
+        const value = await characteristics.k10.readValue();
+        const data = readData(value);
+        if (data && data.type === 'string') {
+            log(`🔒 K10: ${data.value}`);
+            parseK10Status(data.value);
+        }
+    } catch (e) {
+        // Игнорируем ошибки, они будут в следующий раз
+        if (!e.message.includes('invalid attribute length')) {
+            log(`❌ K10 ошибка: ${e.message}`, 'error');
+        }
+    } finally {
+        isReadingK10 = false;
     }
 }
 
@@ -296,9 +321,14 @@ function startPolling() {
         if (characteristics.currentTemp) {
             try {
                 const value = await characteristics.currentTemp.readValue();
-                let temp = readFloat(value);
-                if (temp !== null) {
-                    updateTempDisplay(temp);
+                const data = readData(value);
+                if (data) {
+                    if (data.type === 'float') {
+                        updateTempDisplay(data.value);
+                    } else if (data.type === 'string' && data.value.startsWith('T:')) {
+                        const num = parseFloat(data.value.substring(2));
+                        if (!isNaN(num)) updateTempDisplay(num);
+                    }
                 }
             } catch (e) {}
         }
@@ -307,22 +337,21 @@ function startPolling() {
         if (characteristics.currentHum) {
             try {
                 const value = await characteristics.currentHum.readValue();
-                let hum = readFloat(value);
-                if (hum !== null) {
-                    updateHumDisplay(hum);
+                const data = readData(value);
+                if (data) {
+                    if (data.type === 'float') {
+                        updateHumDisplay(data.value);
+                    } else if (data.type === 'string' && data.value.startsWith('H:')) {
+                        const num = parseFloat(data.value.substring(2));
+                        if (!isNaN(num)) updateHumDisplay(num);
+                    }
                 }
             } catch (e) {}
         }
         
-        // Читаем K10 статус
-        if (characteristics.k10) {
-            try {
-                const value = await characteristics.k10.readValue();
-                let str = readString(value);
-                if (str) {
-                    parseK10Status(str);
-                }
-            } catch (e) {}
+        // Читаем K10 статус (реже, каждые 5 секунд)
+        if (characteristics.k10 && Math.random() < 0.3) { // ~ раз в 3 цикла
+            await readK10Status();
         }
         
     }, 3000);
@@ -341,7 +370,7 @@ function updateTempDisplay(temp) {
         document.querySelector('.status').parentNode.insertBefore(el, document.querySelector('.status').nextSibling);
     }
     
-    const value = (temp !== null && !isNaN(temp)) ? temp.toFixed(1) : '--';
+    const value = (temp !== null && !isNaN(temp) && Math.abs(temp) > 0.01) ? temp.toFixed(1) : '--';
     el.innerHTML = `
         <div class="sensor-label">🌡️ Температура</div>
         <div class="sensor-value">${value}°C</div>
@@ -362,7 +391,7 @@ function updateHumDisplay(hum) {
         }
     }
     
-    const value = (hum !== null && !isNaN(hum)) ? hum.toFixed(1) : '--';
+    const value = (hum !== null && !isNaN(hum) && hum > 0.01) ? hum.toFixed(1) : '--';
     el.innerHTML = `
         <div class="sensor-label">💧 Влажность</div>
         <div class="sensor-value">${value}%</div>
@@ -383,7 +412,7 @@ function createK10Section() {
     section.innerHTML = `
         <h3>🔒 K10 - Магнитный замок <span id="lock-icon">🔓</span></h3>
         <button id="k10-button" class="k10-button">🔒 Удерживайте для активации</button>
-        <div class="k10-status" id="door-status">🚪 Состояние двери: <span>...</span></div>
+        <div class="k10-status" id="door-status">🚪 Состояние двери: <span class="door-closed">Закрыта</span></div>
         <div class="k10-status" id="hold-time">⏱️ Время удержания: 1000 мс</div>
         <div id="lock-active" style="display:none;" class="lock-active">🔐 ЗАМОК АКТИВИРОВАН</div>
     `;
@@ -417,10 +446,22 @@ function setupK10Button() {
             log('❌ K10 характеристика не найдена', 'error');
             return;
         }
+        
+        // Не отправляем команды, если предыдущая ещё выполняется
+        if (isReadingK10 && cmd !== 'RELEASE') {
+            log('⏳ K10 занят, пробуем позже');
+            return;
+        }
+        
         try {
             const encoder = new TextEncoder();
             await characteristics.k10.writeValue(encoder.encode(cmd));
             log(`📤 K10: ${cmd}`);
+            
+            // После отправки ACTIVATE, читаем статус
+            if (cmd === 'ACTIVATE') {
+                setTimeout(() => readK10Status(), 500);
+            }
         } catch (e) {
             log(`❌ K10 ошибка: ${e.message}`, 'error');
         }
@@ -586,6 +627,7 @@ async function disconnectFromDevice() {
     gattServer = null;
     service = null;
     characteristics = {};
+    isReadingK10 = false;
     
     if (bluetoothDevice) {
         bluetoothDevice.removeEventListener('gattserverdisconnected', handleDisconnect);
