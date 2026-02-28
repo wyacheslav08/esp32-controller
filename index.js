@@ -295,8 +295,6 @@ async function findCharacteristics() {
     
     for (let char of chars) {
         const uuid = char.uuid.toLowerCase();
-        // Используем substring для более читаемого вывода UUID
-        log(`  UUID: ${uuid.substring(4, 8)}...${uuid.substring(28)}`); 
         
         if (uuid.includes('26a1')) characteristics.targetHum = char;
         else if (uuid.includes('26a2')) characteristics.currentTemp = char;
@@ -304,60 +302,43 @@ async function findCharacteristics() {
         else if (uuid.includes('26a4')) characteristics.allSettings = char;
         else if (uuid.includes('26a5')) characteristics.sysInfo = char;
         else if (uuid.includes('26a6')) characteristics.k10 = char;
-        else if (uuid.includes('26a7')) characteristics.command = char; // Добавлена команда
+        else if (uuid.includes('26a7')) characteristics.command = char;
     }
-    
-    log(`✅ Найдено ${Object.keys(characteristics).length} нужных характеристик`, 'success');
 
-    // Подписываемся на уведомления, если характеристика поддерживает NOTIFY
-    if (characteristics.currentTemp && characteristics.currentTemp.properties.notify) {
-        characteristics.currentTemp.addEventListener('characteristicvaluechanged', (event) => {
-            const data = new TextDecoder('utf-8').decode(event.target.value);
-            if (data.startsWith('T:')) {
-                const temp = parseFloat(data.substring(2));
-                if (!isNaN(temp)) updateTempDisplay(temp);
+    log(`✅ Характеристики сопоставлены. Настройка уведомлений...`);
+
+    // Вспомогательная функция для безопасной подписки
+    const safeStartNotify = async (char, name, parser) => {
+        if (char && char.properties.notify) {
+            try {
+                char.addEventListener('characteristicvaluechanged', (event) => {
+                    const data = new TextDecoder('utf-8').decode(event.target.value);
+                    parser(data);
+                });
+                await char.startNotifications();
+                log(`🔔 Уведомления '${name}' включены`, 'success');
+            } catch (e) {
+                log(`⚠️ Не удалось включить уведомления для '${name}': ${e.message}`, 'info');
             }
-        });
-        await characteristics.currentTemp.startNotifications();
-        log('🔔 Подписан на уведомления температуры', 'info');
-    }
-    if (characteristics.currentHum && characteristics.currentHum.properties.notify) {
-        characteristics.currentHum.addEventListener('characteristicvaluechanged', (event) => {
-            const data = new TextDecoder('utf-8').decode(event.target.value);
-            if (data.startsWith('H:')) {
-                const hum = parseFloat(data.substring(2));
-                if (!isNaN(hum)) updateHumDisplay(hum);
-            }
-        });
-        await characteristics.currentHum.startNotifications();
-        log('🔔 Подписан на уведомления влажности', 'info');
-    }
-    if (characteristics.sysInfo && characteristics.sysInfo.properties.notify) {
-        characteristics.sysInfo.addEventListener('characteristicvaluechanged', (event) => {
-            const data = new TextDecoder('utf-8').decode(event.target.value);
-            parseSysInfo(data);
-        });
-        await characteristics.sysInfo.startNotifications();
-        log('🔔 Подписан на уведомления системной информации', 'info');
-    }
-    if (characteristics.k10 && characteristics.k10.properties.notify) {
-        characteristics.k10.addEventListener('characteristicvaluechanged', (event) => {
-            const data = new TextDecoder('utf-8').decode(event.target.value);
-            parseK10Status(data);
-        });
-        await characteristics.k10.startNotifications();
-        log('🔔 Подписан на уведомления K10', 'info');
-    }
-    // Для allSettings тоже можно подписаться, чтобы видеть изменения, сделанные на устройстве
-    if (characteristics.allSettings && characteristics.allSettings.properties.notify) {
-        characteristics.allSettings.addEventListener('characteristicvaluechanged', (event) => {
-            const data = new TextDecoder('utf-8').decode(event.target.value);
-            log('🔄 Настройки обновлены устройством', 'info');
-            parseAndDisplaySettings(data);
-        });
-        await characteristics.allSettings.startNotifications();
-        log('🔔 Подписан на уведомления настроек', 'info');
-    }
+        }
+    };
+
+    // Подписываемся по очереди с обработкой ошибок
+    await safeStartNotify(characteristics.currentTemp, 'Температура', (data) => {
+        const temp = parseFloat(data.substring(2));
+        if (!isNaN(temp)) updateTempDisplay(temp);
+    });
+
+    await safeStartNotify(characteristics.currentHum, 'Влажность', (data) => {
+        const hum = parseFloat(data.substring(2));
+        if (!isNaN(hum)) updateHumDisplay(hum);
+    });
+
+    await safeStartNotify(characteristics.sysInfo, 'Система', parseSysInfo);
+    await safeStartNotify(characteristics.k10, 'K10/Замок', parseK10Status);
+    await safeStartNotify(characteristics.allSettings, 'Настройки', parseAndDisplaySettings);
+
+    log(`✅ Настройка уведомлений завершена`, 'success');
 }
 
 /**
