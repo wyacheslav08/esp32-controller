@@ -1145,9 +1145,27 @@ function parseAndDisplaySettings(data) {
             <button id="reset-to-defaults" class="btn btn-danger">⚠️ Сброс к заводским</button>
         </div>
     `;
+
+    // ========== СТАТИСТИКА (только для чтения) ==========
+    html += '<div class="settings-group"><h3>📊 Статистика (только чтение)</h3>';
+
+    const readOnlyStats = [
+        { key: 'wdtResetCount', label: '🔄 Перезагрузок по WDT', icon: '⚠️' },
+        { key: 'rebootCounter', label: '🔁 Плановых перезагрузок', icon: '📅' },
+        { key: 'resetCount', label: '📊 Полных сбросов', icon: '🔄' }
+    ];
+
+    readOnlyStats.forEach(stat => {
+        if (settings[stat.key] !== undefined) {
+            html += `<div class="stat-item readonly">${stat.icon} ${stat.label}: <strong>${settings[stat.key]}</strong></div>`;
+        } else {
+            html += `<div class="stat-item readonly">${stat.icon} ${stat.label}: <strong>0</strong></div>`;
+        }
+    });
+    html += '</div>';
     
-    element.innerHTML = html;
-    setupSettingsHandlers(settings);
+        element.innerHTML = html;
+        setupSettingsHandlers(settings);
 }
 
 function setupSettingsHandlers(initialSettings) {
@@ -1273,10 +1291,29 @@ async function saveAllSettings() {
     }
     
     try {
+        // Фильтруем только изменяемые настройки (без статистики)
+        const editableKeys = [
+            'targetHumidity', 'lockHoldTime', 'doorSoundEnabled', 'waterSilicaSoundEnabled',
+            'waterHeaterEnabled', 'waterHeaterMaxTemp', 'lockTimeIndex', 'menuTimeoutOptionIndex',
+            'screenTimeoutOptionIndex', 'deadZonePercent', 'minHumidityChange', 'maxOperationDuration',
+            'operationCooldown', 'maxSafeHumidity', 'resourceCheckDiff', 'hysteresis',
+            'lowFaultThreshold', 'emptyFaultThreshold', 'tempOffsetTop', 'humOffsetTop',
+            'tempOffsetHum', 'humOffsetHum'
+        ];
+        
         let settingsString = '';
         for (const [key, value] of Object.entries(pendingSettings)) {
-            if (settingsString.length > 0) settingsString += ',';
-            settingsString += `${key}=${value}`;
+            // Сохраняем только изменяемые настройки
+            if (editableKeys.includes(key)) {
+                if (settingsString.length > 0) settingsString += ',';
+                settingsString += `${key}=${value}`;
+            }
+        }
+        
+        if (settingsString.length === 0) {
+            log('ℹ️ Нет изменяемых настроек для сохранения');
+            pendingSettings = {};
+            return;
         }
         
         log(`📤 Сохранение настроек: ${settingsString}`);
