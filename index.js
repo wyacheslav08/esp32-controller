@@ -291,7 +291,11 @@ async function findCharacteristics() {
     log('Поиск характеристик...');
     
     const chars = await service.getCharacteristics();
-    log(`Найдено ${chars.length} характеристик`);
+    // --- ДОБАВЛЕНО ЛОГИРОВАНИЕ ---
+    chars.forEach(char => {
+        log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}`, 'info');
+    });
+    // --- КОНЕЦ ДОБАВЛЕННОГО ЛОГИРОВАНИЯ ---
     
     for (let char of chars) {
         const uuid = char.uuid.toLowerCase();
