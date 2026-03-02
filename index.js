@@ -19,14 +19,14 @@ const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
 const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
 const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
-const BLE_CHAR_COMMAND_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a7"; // Добавлена характеристика для команд
+const BLE_CHAR_COMMAND_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a7";
 
 // Объекты BLE
 let bluetoothDevice = null;
 let gattServer = null;
-let service = null;
-// ИСПРАВЛЕНИЕ: Инициализируем характеристики со всеми ожидаемыми UUID, устанавливая их в null
-// Это предотвратит ошибки "Cannot read properties of undefined"
+let primaryService1 = null; // Глобальная переменная для первого сервиса
+let primaryService2 = null; // Глобальная переменная для второго сервиса
+// Инициализируем характеристики со всеми ожидаемыми UUID, устанавливая их в null
 let characteristics = {
     targetHum: null,
     currentTemp: null,
@@ -98,7 +98,7 @@ function initializeSettingDefinitions() {
         { key: 'resourceCheckDiff', label: 'Порог разницы ресурсов', type: 'number', min: 1, max: 20, step: 1, unit: '%' },
         { key: 'humidityHysteresis', label: 'Гистерезис влажности', type: 'number', min: 0.1, max: 5.0, step: 0.1, unit: '%', float: true },
         { key: 'resourceLowFaultThreshold', label: 'Порог "Мало ресурсов"', type: 'number', min: 1, max: 10, step: 1 },
-        { key: 'resourceEmptyFaultThreshold', label: 'Порог "Нет ресурсов"', type: 'number', min: 1, max: 20, step: 1 }, // <-- ИСПРАВЛЕНО
+        { key: 'resourceEmptyFaultThreshold', label: 'Порог "Нет ресурсов"', type: 'number', min: 1, max: 20, step: 1 },
         
         // --- Калибровка DHT ---
         { key: 'tempOffsetTop', label: 'Смещение темп. (верх.)', type: 'number', min: -20, max: 20, step: 1, unit: '°C' },
@@ -250,30 +250,39 @@ async function connectToDevice() {
             connectButton.textContent = '⏳ Поиск...';
         }
         
-        // Запрос устройства по имени-префиксу и списку сервисов
+        // Запрос устройства по имени-префиксу и списку ВСЕХ сервисов
         bluetoothDevice = await navigator.bluetooth.requestDevice({
             filters: [{ namePrefix: 'GuitarCabinet' }],
-            optionalServices: [BLE_SERVICE_UUID, BLE_SERVICE_UUID_2]
+            optionalServices: [BLE_SERVICE_UUID, BLE_SERVICE_UUID_2] // ОБЯЗАТЕЛЬНО ДОБАВЬТЕ ВТОРОЙ СЕРВИС
         });
 
         log(`✅ Найдено: ${bluetoothDevice.name}`, 'success');
         
-        // Добавляем слушатель события отключения
+        // Добавляем слушатель события отключения ДО подключения GATT
         bluetoothDevice.addEventListener('gattserverdisconnected', handleDisconnect);
         
-        // --- НОВЫЙ ШАГ: Получаем ОБА сервиса ---
-        service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
+        gattServer = await bluetoothDevice.gatt.connect();
+        if (!gattServer) { // Защитная проверка
+            throw new Error('GATT server connection failed unexpectedly.');
+        }
+        log('✅ GATT сервер подключен', 'success');
+        
+        // --- НОВЫЙ ШАГ: Получаем ОБА сервиса и присваиваем глобальным переменным ---
+        primaryService1 = await gattServer.getPrimaryService(BLE_SERVICE_UUID); // Присваиваем глобальной
+        if (!primaryService1) { // Защитная проверка
+            throw new Error(`Primary Service 1 (UUID: ${BLE_SERVICE_UUID}) not found.`);
+        }
         log('✅ BLE Сервис 1 найден', 'success');
-        let service2 = await gattServer.getPrimaryService(BLE_SERVICE_UUID_2); // <-- Получаем второй сервис
+        
+        primaryService2 = await gattServer.getPrimaryService(BLE_SERVICE_UUID_2); // Присваиваем глобальной
+        if (!primaryService2) { // Защитная проверка
+            throw new Error(`Primary Service 2 (UUID: ${BLE_SERVICE_UUID_2}) not found.`);
+        }
         log('✅ BLE Сервис 2 найден', 'success');
 
-        // Передаем ОБА сервиса в функцию поиска характеристик
-        await findCharacteristics(service, service2);
+        // Передаем ГЛОБАЛЬНЫЕ сервисы в функцию findCharacteristics
+        await findCharacteristics(primaryService1, primaryService2);
         
-        // Находим все необходимые характеристики
-        await findCharacteristics(); // Этот вызов теперь более устойчив
-        
-        // Перемещаем updateStatus и кнопки сюда, после успешного findCharacteristics
         updateStatus('✅ Подключено', 'connected');
         if (connectButton) {
             connectButton.textContent = '❌ Отключиться';
@@ -281,8 +290,8 @@ async function connectToDevice() {
             connectButton.disabled = false;
         }
         
-        // Создаем динамические секции интерфейса только если K10 найдена
-        if (characteristics.k10) { // <--- ИСПРАВЛЕНИЕ: Проверяем наличие K10
+        // Создаем динамические секции интерфейса только если K10 найдена (она в Service 1)
+        if (characteristics.k10) { 
             createK10Section();
         } else {
             log('❌ Характеристика K10 не найдена, секция K10 не будет создана.', 'error');
@@ -292,7 +301,6 @@ async function connectToDevice() {
         startPolling();      // Запускаем опрос
         
     } catch (error) {
-        // ИСПРАВЛЕНИЕ: Более безопасное логирование ошибки
         log(`❌ Ошибка подключения: ${error instanceof Error ? error.message : JSON.stringify(error)}`, 'error');
         updateStatus('❌ Ошибка', 'error');
         if (connectButton) {
@@ -305,56 +313,48 @@ async function connectToDevice() {
 }
 
 /**
- * Находит все необходимые BLE-характеристики и сохраняет их в объекте `characteristics`.
+ * Находит все необходимые BLE-характеристики из одного или нескольких сервисов
+ * и сохраняет их в объекте `characteristics`.
+ * @param {BluetoothRemoteGATTService} service1 - Первый объект сервиса.
+ * @param {BluetoothRemoteGATTService} [service2] - Второй объект сервиса (опционально).
  */
-async function findCharacteristics() {
+async function findCharacteristics(service1, service2 = null) {
+    log('Поиск характеристик...');
+    
+    let allChars = []; // Буфер для всех найденных характеристик
+    
+    // Поиск характеристик в первом сервисе
+    let chars1 = await service1.getCharacteristics();
+    allChars = allChars.concat(chars1);
+    log(`Найдено ${chars1.length} характеристик в Сервисе 1.`);
 
-    /**
-    * Находит все необходимые BLE-характеристики из одного или нескольких сервисов
-    * и сохраняет их в объекте `characteristics`.
-    * @param {BluetoothRemoteGATTService} service1 - Первый объект сервиса.
-    * @param {BluetoothRemoteGATTService} [service2] - Второй объект сервиса (опционально).
-    */
-    async function findCharacteristics(service1, service2 = null) { // <-- ИЗМЕНЕНА сигнатура
-        log('Поиск характеристик...');
+    // Если есть второй сервис, ищем характеристики и в нем
+    if (service2) {
+        let chars2 = await service2.getCharacteristics();
+        allChars = allChars.concat(chars2);
+        log(`Найдено ${chars2.length} характеристик в Сервисе 2.`);
+    }
     
-        let allChars = []; // Буфер для всех найденных характеристик
+    log(`Всего найдено ${allChars.length} характеристик.`); // Логируем общее количество найденных
     
-        // Поиск характеристик в первом сервисе
-        let chars1 = await service1.getCharacteristics();
-        allChars = allChars.concat(chars1);
-        log(`Найдено ${chars1.length} характеристик в Сервисе 1.`);
+    allChars.forEach(char => {
+        log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}. Свойства: notify=${char.properties.notify}, read=${char.properties.read}, write=${char.properties.write}, indicate=${char.properties.indicate}`, 'info');
+    });
 
-        // Если есть второй сервис, ищем характеристики и в нем
-        if (service2) {
-            let chars2 = await service2.getCharacteristics();
-            allChars = allChars.concat(chars2);
-            log(`Найдено ${chars2.length} характеристик в Сервисе 2.`);
-        }
-    
-        log(`Всего найдено ${allChars.length} характеристик.`); // Логируем общее количество найденных
-    
-        allChars.forEach(char => { // Теперь перебираем ВСЕ найденные характеристики
-            log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}. Свойства: notify=${char.properties.notify}, read=${char.properties.read}, write=${char.properties.write}, indicate=${char.properties.indicate}`, 'info');
-        });
-
-        // ИСПРАВЛЕНИЕ: Перебираем найденные характеристики и назначаем их в объект 'characteristics'
-        for (let char of allChars) { // Итерируем по allChars
-            const uuid = char.uuid.toLowerCase();
+    // Перебираем найденные характеристики и назначаем их в объект 'characteristics'
+    for (let char of allChars) {
+        const uuid = char.uuid.toLowerCase();
         
-            if (uuid.includes('26a1')) characteristics.targetHum = char;
-            else if (uuid.includes('26a2')) characteristics.currentTemp = char;
-            else if (uuid.includes('26a3')) characteristics.currentHum = char;
-            else if (uuid.includes('26a4')) characteristics.allSettings = char;
-            else if (uuid.includes('26a5')) characteristics.sysInfo = char;
-            else if (uuid.includes('26a6')) characteristics.k10 = char;
-            else if (uuid.includes('26a7')) characteristics.command = char;
-        }
-
+        if (uuid.includes('26a1')) characteristics.targetHum = char;
+        else if (uuid.includes('26a2')) characteristics.currentTemp = char;
+        else if (uuid.includes('26a3')) characteristics.currentHum = char;
+        else if (uuid.includes('26a4')) characteristics.allSettings = char;
+        else if (uuid.includes('26a5')) characteristics.sysInfo = char;
+        else if (uuid.includes('26a6')) characteristics.k10 = char;
+        else if (uuid.includes('26a7')) characteristics.command = char;
     }
 
-    // ИСПРАВЛЕНИЕ: Проверяем, что все ожидаемые характеристики были найдены
-    // Если какая-то из них равна null, значит, она не была обнаружена.
+    // Проверяем, что все ожидаемые характеристики были найдены
     let allExpectedFound = true;
     for (const key in characteristics) {
         if (characteristics[key] === null) {
@@ -368,16 +368,16 @@ async function findCharacteristics() {
         log(`⚠️ Некоторые характеристики не были обнаружены. Работа с ними может быть ограничена.`, 'warn');
     }
 
-    // --- Добавим небольшую задержку перед настройкой уведомлений, на всякий случай ---
-    await new Promise(resolve => setTimeout(resolve, 500)); // <--- ДОБАВЛЕНО
+    // Добавим небольшую задержку перед настройкой уведомлений, на всякий случай
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     log(`✅ Характеристики сопоставлены. Настройка уведомлений...`);
 
     // Вспомогательная функция для безопасной подписки
     const safeStartNotify = async (char, name, parser) => {
-        if (!char) { // Добавлена проверка, если характеристика null
+        if (!char) { 
             log(`🔔 NOTIFY: Характеристика '${name}' не найдена. Пропускаем настройку уведомлений.`, 'info');
-            return false; // Возвращаем false, чтобы указать на неудачу
+            return false;
         }
         if (char.properties.notify) {
             try {
@@ -390,14 +390,14 @@ async function findCharacteristics() {
                 });
                 await char.startNotifications();
                 log(`🔔 Уведомления '${name}' включены`, 'success');
-                return true; // Возвращаем true при успехе
+                return true;
             } catch (e) {
                 log(`❌ НЕ УДАЛОСЬ включить уведомления для '${name}' (UUID: ${char.uuid}): ${e.message}`, 'error');
-                return false; // Возвращаем false при ошибке
+                return false;
             }
         } else {
             log(`🔔 NOTIFY: Характеристика '${name}' (UUID: ${char.uuid}) не поддерживает уведомления (notify=false).`, 'info');
-            return false; // Возвращаем false
+            return false;
         }
     };
 
@@ -429,7 +429,7 @@ async function findCharacteristics() {
         }, SYSINFO_POLLING_RATE_MS);
     }
     
-    await safeStartNotify(characteristics.k10, 'K10/Замок', parseK10Status); // <--- K10 теперь с notify
+    await safeStartNotify(characteristics.k10, 'K10/Замок', parseK10Status);
 
     await safeStartNotify(characteristics.allSettings, 'Настройки', parseAndDisplaySettings);
 
@@ -443,9 +443,8 @@ async function findCharacteristics() {
  * @returns {Promise<string|null>} - Промис с прочитанным значением или null в случае ошибки.
  */
 async function readCharacteristic(char, name) {
-    // ИСПРАВЛЕНИЕ: Проверяем, что char не null, прежде чем пытаться его использовать
     if (!char) {
-        // log(`❌ Характеристика '${name}' не найдена.`, 'error'); // Уже логируется в findCharacteristics
+        log(`❌ Характеристика '${name}' не найдена. Невозможно прочитать.`, 'error');
         return null;
     }
     try {
@@ -469,7 +468,7 @@ async function disconnectFromDevice() {
         clearInterval(pollingInterval);
         pollingInterval = null;
     }
-    if (sysInfoPollingInterval) { // ДОБАВЛЕНО: Очищаем интервал SysInfo
+    if (sysInfoPollingInterval) { 
         clearInterval(sysInfoPollingInterval);
         sysInfoPollingInterval = null;
     }
@@ -477,7 +476,6 @@ async function disconnectFromDevice() {
     // Останавливаем уведомления
     for (const key in characteristics) {
         const char = characteristics[key];
-        // ИСПРАВЛЕНИЕ: Проверяем, что char не null перед отпиской
         if (char && char.properties.notify) {
             try {
                 await char.stopNotifications();
@@ -498,12 +496,12 @@ async function disconnectFromDevice() {
         }
     }
     
-    // Сбрасываем все BLE-объекты, но оставляем структуру характеристик с null
+    // Сбрасываем все BLE-объекты
     gattServer = null;
-    service = null;
-    service2 = null; // <-- Сбрасываем второй сервис
+    primaryService1 = null; // Сбрасываем глобальный сервис 1
+    primaryService2 = null; // Сбрасываем глобальный сервис 2
     for (const key in characteristics) {
-        characteristics[key] = null; // Обнуляем каждую характеристику
+        characteristics[key] = null;
     }
     
     if (bluetoothDevice) {
@@ -695,8 +693,8 @@ function parseSysInfo(data) {
     let silicaStatus = '';
     let humRelayStatus = '';
     let ventRelayStatus = '';
-    let waterHeaterStatus = ''; // ДОБАВЛЕНО
-    let whSafeShutdown = false; // ДОБАВЛЕНО
+    let waterHeaterStatus = ''; 
+    let whSafeShutdown = false; 
 
     const parts = data.split(',');
     parts.forEach(part => {
@@ -716,9 +714,9 @@ function parseSysInfo(data) {
             humRelayStatus = cleanValue;
         } else if (cleanKey === 'VENT_RELAY') {
             ventRelayStatus = cleanValue;
-        } else if (cleanKey === 'WATER_HEATER') { // ДОБАВЛЕНО
+        } else if (cleanKey === 'WATER_HEATER') {
             waterHeaterStatus = cleanValue;
-        } else if (cleanKey === 'WH_SAFE_SHUTDOWN') { // ДОБАВЛЕНО
+        } else if (cleanKey === 'WH_SAFE_SHUTDOWN') {
             whSafeShutdown = (cleanValue === '1');
         }
     });
@@ -741,12 +739,12 @@ function parseSysInfo(data) {
     }
 
     htmlContent += `<div style="font-size: 14px; margin-top: 10px; text-align: left; padding-left: 10px;">`;
-    htmlContent += `💧 Вода: <strong class="${waterStatus === 'EMPTY' ? 'status-off' : (waterStatus === 'LOW' ? 'status-warning' : 'status-on')}">${waterStatus || 'OK'}</strong><br>`; // Добавлены классы статусов
-    htmlContent += `🍚 Силикагель: <strong class="${silicaStatus === 'EMPTY' ? 'status-off' : (silicaStatus === 'LOW' ? 'status-warning' : 'status-on')}">${silicaStatus || 'OK'}</strong><br>`; // Добавлены классы статусов
+    htmlContent += `💧 Вода: <strong class="${waterStatus === 'EMPTY' ? 'status-off' : (waterStatus === 'LOW' ? 'status-warning' : 'status-on')}">${waterStatus || 'OK'}</strong><br>`; 
+    htmlContent += `🍚 Силикагель: <strong class="${silicaStatus === 'EMPTY' ? 'status-off' : (silicaStatus === 'LOW' ? 'status-warning' : 'status-on')}">${silicaStatus || 'OK'}</strong><br>`; 
     htmlContent += `H% Реле: <strong class="${humRelayStatus === 'ON' ? 'status-on' : 'status-off'}">${humRelayStatus || 'OFF'}</strong><br>`;
     htmlContent += `Вентилятор: <strong class="${ventRelayStatus === 'ON' ? 'status-on' : 'status-off'}">${ventRelayStatus || 'OFF'}</strong><br>`;
     htmlContent += `Подогрев: <strong class="${waterHeaterStatus === 'ON' ? 'status-on' : 'status-off'}">${waterHeaterStatus || 'OFF'}</strong>`;
-    if (whSafeShutdown) { // Отображение предупреждения о безопасном отключении подогрева
+    if (whSafeShutdown) { 
         htmlContent += ` <span style="color: #f44336; font-weight: bold;">(АВАРИЯ!)</span>`;
     }
     htmlContent += `</div>`;
@@ -763,7 +761,7 @@ function parseSysInfo(data) {
  * Создает секцию управления кнопкой K10 (замком) на UI.
  */
 function createK10Section() {
-    if (document.getElementById('k10-section')) return; // Если секция уже существует, не создаем повторно
+    if (document.getElementById('k10-section')) return;
     
     const section = document.createElement('div');
     section.id = 'k10-section';
@@ -811,7 +809,7 @@ function setupK10Button() {
      * @param {string} cmd - Команда ("PRESS", "RELEASE", "ACTIVATE").
      */
     async function sendK10Command(cmd) {
-        if (!characteristics.k10 || !gattServer?.connected) { // ИСПРАВЛЕНИЕ: Добавлена проверка на gattServer
+        if (!characteristics.k10 || !gattServer?.connected) {
             log('❌ K10 характеристика не найдена или BLE не подключен, не могу отправить команду.', 'error');
             return;
         }
@@ -823,7 +821,7 @@ function setupK10Button() {
             setTimeout(async () => {
                 const data = await readCharacteristic(characteristics.k10, 'K10');
                 if (data) parseK10Status(data);
-            }, 500); // Небольшая задержка для обновления на устройстве
+            }, 500); 
             
         } catch (e) {
             log(`❌ K10: Ошибка при отправке команды "${cmd}": ${e.message}`, 'error');
@@ -955,7 +953,7 @@ function parseAndDisplaySettings(data) {
         else if (['lockTimeIndex', 'menuTimeoutOptionIndex', 'screenTimeoutOptionIndex'].includes(key)) groupName = 'Таймауты';
         else if (['doorSoundEnabled', 'waterSilicaSoundEnabled'].includes(key)) groupName = 'Звуковые оповещения';
         else if (['waterHeaterEnabled', 'waterHeaterMaxTemp'].includes(key)) groupName = 'Подогрев воды';
-        else if (['deadZonePercent', 'minHumidityChangeForTimeout', 'maxOperationDuration', 'operationCooldown', 'maxSafeHumidity', 'resourceCheckDiff', 'humidityHysteresis', 'resourceLowFaultThreshold', 'resourceEmptyFaultThreshold'].includes(key)) groupName = 'Логика влажности'; // <--- ИСПРАВЛЕНО имя ключа
+        else if (['deadZonePercent', 'minHumidityChangeForTimeout', 'maxOperationDuration', 'operationCooldown', 'maxSafeHumidity', 'resourceCheckDiff', 'humidityHysteresis', 'resourceLowFaultThreshold', 'resourceEmptyFaultThreshold'].includes(key)) groupName = 'Логика влажности';
         else if (['tempOffsetTop', 'humOffsetTop', 'tempOffsetHum', 'humOffsetHum'].includes(key)) groupName = 'Калибровка DHT';
         else if (['autoRebootEnabled', 'autoRebootHour', 'autoRebootMinute', 'autoRebootDays'].includes(key)) groupName = 'Авто-перезагрузка';
         else if (['resetCount', 'wdtResetCount', 'autoRebootCounter', 'totalRebootCounter', 'lastRebootTimestamp'].includes(key)) groupName = 'Статистика';
@@ -1095,7 +1093,7 @@ async function sendSettingsToDevice() {
  * @param {string} command - Команда для отправки ("RESET_TO_DEFAULTS", "REBOOT").
  */
 async function sendCommandToDevice(command) {
-    if (!characteristics.command || !gattServer?.connected) { // ИСПРАВЛЕНИЕ: Добавлена проверка на gattServer
+    if (!characteristics.command || !gattServer?.connected) {
         log('❌ Характеристика Command не найдена или BLE не подключен. Не могу отправить команду.', 'error');
         return;
     }
@@ -1134,7 +1132,6 @@ function confirmAndSendReboot() {
 
 //==============================================================================
 // Вспомогательная функция для получения UUID по имени ключа, для логирования
-// Эту функцию нужно переместить из document.addEventListener в глобальную область!
 //==============================================================================
 function getCharUUIDByName(key) {
     switch (key) {
