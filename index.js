@@ -288,10 +288,14 @@ async function connectToDevice() {
  * Находит все необходимые BLE-характеристики и сохраняет их в объекте `characteristics`.
  */
 async function findCharacteristics() {
-    log('Поиск характеристик...');
+    log(`Найдено ${chars.length} характеристик (по версии клиента)`); // <-- ИЗМЕНЕНО ЛОГИРОВАНИЕ
+    // --- ДОБАВЛЕНО ЛОГИРОВАНИЕ ЗДЕСЬ ---
+    chars.forEach(char => {
+        log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}`, 'info');
+    });
     
-    const chars = await service.getCharacteristics();
-    log(`Найдено ${chars.length} характеристик`);
+    //const chars = await service.getCharacteristics();
+    //log(`Найдено ${chars.length} характеристик`);
     
     for (let char of chars) {
         const uuid = char.uuid.toLowerCase();
