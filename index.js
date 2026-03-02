@@ -293,7 +293,7 @@ async function findCharacteristics() {
     const chars = await service.getCharacteristics();
     // --- ДОБАВЛЕНО ЛОГИРОВАНИЕ ---
     chars.forEach(char => {
-        log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}`, 'info');
+        log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}. Свойства: notify=${char.properties.notify}, read=${char.properties.read}, write=${char.properties.write}, indicate=${char.properties.indicate}`, 'info');
     });
     // --- КОНЕЦ ДОБАВЛЕННОГО ЛОГИРОВАНИЯ ---
     
@@ -309,21 +309,35 @@ async function findCharacteristics() {
         else if (uuid.includes('26a7')) characteristics.command = char;
     }
 
+    // --- Добавим небольшую задержку перед настройкой уведомлений, на всякий случай ---
+    await new Promise(resolve => setTimeout(resolve, 500)); // <--- ДОБАВИТЬ ЭТУ ЗАДЕРЖКУ
+
+
     log(`✅ Характеристики сопоставлены. Настройка уведомлений...`);
 
-    // Вспомогательная функция для безопасной подписки
+    // Вспомогательная функция для безопасной подписки (для детальных логов при включении уведомлений)
     const safeStartNotify = async (char, name, parser) => {
-        if (char && char.properties.notify) {
+        if (!char) { // Добавлена проверка
+            log(`🔔 NOTIFY: Характеристика '${name}' (UUID: ${name === 'Система' ? BLE_CHAR_SYS_INFO_UUID : char.uuid}) равна null. Пропускаем.`, 'info');
+            return;
+        }
+        if (char.properties.notify) {
             try {
+                // Логируем свойства характеристики перед попыткой включения уведомлений
+                log(`🔔 NOTIFY: Пытаемся включить уведомления для '${name}' (UUID: ${char.uuid}). Свойства: notify=${char.properties.notify}, read=${char.properties.read}, write=${char.properties.write}, indicate=${char.properties.indicate}`, 'info');
+
                 char.addEventListener('characteristicvaluechanged', (event) => {
                     const data = new TextDecoder('utf-8').decode(event.target.value);
                     parser(data);
+                    log(`🔔 NOTIFY: Получены данные для '${name}': ${data}`, 'info'); // Логируем входящие уведомления
                 });
                 await char.startNotifications();
                 log(`🔔 Уведомления '${name}' включены`, 'success');
             } catch (e) {
-                log(`⚠️ Не удалось включить уведомления для '${name}': ${e.message}`, 'info');
+                log(`❌ НЕ УДАЛОСЬ включить уведомления для '${name}' (UUID: ${char.uuid}): ${e.message}`, 'error'); // Изменено на error
             }
+        } else {
+            log(`🔔 NOTIFY: Характеристика '${name}' (UUID: ${char.uuid}) не поддерживает уведомления (notify=false).`, 'info');
         }
     };
 
