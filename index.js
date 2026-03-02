@@ -803,7 +803,7 @@ function setupK10Button() {
         e.preventDefault();
         releasePress();
     });
-    
+
     /**
      * Отправляет команду K10 на устройство.
      * @param {string} cmd - Команда ("PRESS", "RELEASE", "ACTIVATE").
@@ -814,14 +814,17 @@ function setupK10Button() {
             return;
         }
         try {
+            // Убедитесь, что нет других операций записи в процессе
+            // В данном случае, это уже будет обработано очередью промисов
             await characteristics.k10.writeValue(new TextEncoder().encode(cmd));
             log(`📤 K10: Отправлена команда "${cmd}"`, 'success');
             
             // Запрашиваем обновленный статус после отправки команды
-            setTimeout(async () => {
-                const data = await readCharacteristic(characteristics.k10, 'K10');
-                if (data) parseK10Status(data);
-            }, 500); 
+            // Добавим небольшую задержку, чтобы ESP32 успел обработать
+            await new Promise(resolve => setTimeout(resolve, 100)); // Добавляем задержку
+            
+            const data = await readCharacteristic(characteristics.k10, 'K10');
+            if (data) parseK10Status(data);
             
         } catch (e) {
             log(`❌ K10: Ошибка при отправке команды "${cmd}": ${e.message}`, 'error');
@@ -831,39 +834,40 @@ function setupK10Button() {
     /**
      * Начинает имитацию нажатия кнопки K10.
      */
-    function startPress() {
+    async function startPress() { // <-- Сделать async
         if (isPressed) return;
         isPressed = true;
-        sendK10Command('PRESS');
+        await sendK10Command('PRESS'); // <-- Добавить await
         if (button) button.textContent = '⏳ Удерживайте...';
         
-        // Получаем текущее время удержания из dataset
         const currentHoldTime = parseInt(button.dataset.holdTime || "1000"); 
 
-        pressTimer = setTimeout(async () => {
-            if (isPressed) { // Проверяем, что кнопка все еще удерживается
-                await sendK10Command('ACTIVATE');
+        pressTimer = setTimeout(async () => { // <-- Оставить async здесь
+            if (isPressed) {
+                await sendK10Command('ACTIVATE'); // <-- Добавить await
                 if (button) button.textContent = '🔒 Замок активирован!';
                 const lockActiveDiv = document.getElementById('lock-active');
                 if (lockActiveDiv) lockActiveDiv.style.display = 'block';
                 const lockIcon = document.getElementById('lock-icon');
                 if (lockIcon) lockIcon.textContent = '🔒';
             }
-        }, currentHoldTime); // Используем актуальное время удержания
+        }, currentHoldTime);
     }
     
     /**
      * Завершает имитацию нажатия кнопки K10.
      */
-    function releasePress() {
+    async function releasePress() { // <-- Сделать async
         if (!isPressed) return;
-        clearTimeout(pressTimer); // Отменяем таймер активации
-        sendK10Command('RELEASE');
+        clearTimeout(pressTimer);
+        await sendK10Command('RELEASE'); // <-- Добавить await
         if (button) button.textContent = '🔒 Удерживайте для активации';
         const lockActiveDiv = document.getElementById('lock-active');
         if (lockActiveDiv) lockActiveDiv.style.display = 'none';
         isPressed = false;
     }
+
+
 }
 
 /**
@@ -1181,3 +1185,4 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStatus('Отключено', 'disconnected');
 
 });
+
