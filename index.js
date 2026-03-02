@@ -1108,12 +1108,30 @@ function confirmAndSendReboot() {
     }
 }
 
+//==============================================================================
+// Вспомогательная функция для получения UUID по имени ключа, для логирования
+// Эту функцию нужно переместить из document.addEventListener в глобальную область!
+//==============================================================================
+function getCharUUIDByName(key) {
+    switch (key) {
+        case 'targetHum': return BLE_CHAR_TARGET_HUM_UUID;
+        case 'currentTemp': return BLE_CHAR_CURRENT_TEMP_UUID;
+        case 'currentHum': return BLE_CHAR_CURRENT_HUM_UUID;
+        case 'allSettings': return BLE_CHAR_ALL_SETTINGS_UUID;
+        case 'sysInfo': return BLE_CHAR_SYS_INFO_UUID;
+        case 'k10': return BLE_CHAR_K10_UUID;
+        case 'command': return BLE_CHAR_COMMAND_UUID;
+        default: return 'UNKNOWN_UUID';
+    }
+}
 
 // =========================================================================
 // ОСНОВНОЙ ВХОД В СКРИПТ (После загрузки DOM)
 // =========================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+
+    
     // Инициализация ссылок на DOM-элементы
     statusLed = document.querySelector('.status-led');
     statusText = document.getElementById('statusText');
@@ -1141,17 +1159,4 @@ document.addEventListener('DOMContentLoaded', () => {
     log('🚀 Веб-интерфейс загружен. Ожидание подключения...', 'info');
     updateStatus('Отключено', 'disconnected');
 
-    // Вспомогательная функция для получения UUID по имени ключа, для логирования
-    function getCharUUIDByName(key) {
-        switch (key) {
-            case 'targetHum': return BLE_CHAR_TARGET_HUM_UUID;
-            case 'currentTemp': return BLE_CHAR_CURRENT_TEMP_UUID;
-            case 'currentHum': return BLE_CHAR_CURRENT_HUM_UUID;
-            case 'allSettings': return BLE_CHAR_ALL_SETTINGS_UUID;
-            case 'sysInfo': return BLE_CHAR_SYS_INFO_UUID;
-            case 'k10': return BLE_CHAR_K10_UUID;
-            case 'command': return BLE_CHAR_COMMAND_UUID;
-            default: return 'UNKNOWN_UUID';
-        }
-    }
 });
