@@ -542,7 +542,12 @@ function handleDisconnect() {
 async function loadAllData() {
     log('📥 Загрузка всех данных с устройства...');
     
-    // ИСПРАВЛЕНИЕ: Добавляем проверки на наличие характеристик перед чтением
+    // --- ДОБАВИТЬ ЭТУ СТРОКУ ---
+    // Добавляем небольшую задержку, чтобы ESP32 гарантированно успел обновить
+    // характеристику AllSettings в своем onConnect коллбэке, прежде чем клиент ее прочитает.
+    await new Promise(resolve => setTimeout(resolve, 300)); 
+    // --- КОНЕЦ ДОБАВЛЕНИЯ ---
+    
     if (characteristics.currentTemp) {
         const tempData = await readCharacteristic(characteristics.currentTemp, 'температуры');
         if (tempData && tempData.startsWith('T:')) {
@@ -559,14 +564,13 @@ async function loadAllData() {
         }
     } else { log(`❌ Характеристика 'Влажность' не найдена для загрузки.`, 'error'); }
     
-    // SysInfo теперь обрабатывается через уведомления или отдельный опрос, не читаем здесь
-    // const sysInfoData = await readCharacteristic(characteristics.sysInfo, 'системной информации');
-    // if (sysInfoData) { parseSysInfo(sysInfoData); }
-    
+    // --- ЭТО КРИТИЧЕСКОЕ ЧТЕНИЕ ---
     if (characteristics.allSettings) {
         const settingsData = await readCharacteristic(characteristics.allSettings, 'настроек');
         if (settingsData) {
             parseAndDisplaySettings(settingsData);
+        } else {
+             log(`❌ Не удалось прочитать данные настроек.`, 'error');
         }
     } else { log(`❌ Характеристика 'Настройки' не найдена для загрузки.`, 'error'); }
     
@@ -577,7 +581,6 @@ async function loadAllData() {
         }
     } else { log(`❌ Характеристика 'K10' не найдена для загрузки.`, 'error'); }
 
-    // Характеристика Command только для записи, не читаем ее здесь
     if (!characteristics.command) {
         log(`❌ Характеристика 'Command' не найдена для использования.`, 'error');
     }
