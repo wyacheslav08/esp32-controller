@@ -12,6 +12,7 @@
 
 // UUID сервисов и характеристик BLE
 const BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const BLE_SERVICE_UUID_2 = "4fafc202-1fb5-459e-8fcc-c5c9c331914b";
 const BLE_CHAR_TARGET_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a1";
 const BLE_CHAR_CURRENT_TEMP_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a2";
 const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
@@ -252,7 +253,7 @@ async function connectToDevice() {
         // Запрос устройства по имени-префиксу и списку сервисов
         bluetoothDevice = await navigator.bluetooth.requestDevice({
             filters: [{ namePrefix: 'GuitarCabinet' }],
-            optionalServices: [BLE_SERVICE_UUID]
+            optionalServices: [BLE_SERVICE_UUID, BLE_SERVICE_UUID_2]
         });
 
         log(`✅ Найдено: ${bluetoothDevice.name}`, 'success');
@@ -260,13 +261,14 @@ async function connectToDevice() {
         // Добавляем слушатель события отключения
         bluetoothDevice.addEventListener('gattserverdisconnected', handleDisconnect);
         
-        // Подключаемся к GATT-серверу
-        gattServer = await bluetoothDevice.gatt.connect();
-        log('✅ GATT сервер подключен', 'success');
-        
-        // Получаем основной сервис
+        // --- НОВЫЙ ШАГ: Получаем ОБА сервиса ---
         service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
-        log('✅ BLE Сервис найден', 'success');
+        log('✅ BLE Сервис 1 найден', 'success');
+        let service2 = await gattServer.getPrimaryService(BLE_SERVICE_UUID_2); // <-- Получаем второй сервис
+        log('✅ BLE Сервис 2 найден', 'success');
+
+        // Передаем ОБА сервиса в функцию поиска характеристик
+        await findCharacteristics(service, service2);
         
         // Находим все необходимые характеристики
         await findCharacteristics(); // Этот вызов теперь более устойчив
@@ -306,28 +308,49 @@ async function connectToDevice() {
  * Находит все необходимые BLE-характеристики и сохраняет их в объекте `characteristics`.
  */
 async function findCharacteristics() {
-    log('Поиск характеристик...');
-    
-    const chars = await service.getCharacteristics();
-    log(`Найдено ${chars.length} характеристик (по версии клиента)`);
-    
-    // --- ДОБАВЛЕНО ЛОГИРОВАНИЕ ЗДЕСЬ (для отображения всех найденных UUID) ---
-    chars.forEach(char => {
-        log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}. Свойства: notify=${char.properties.notify}, read=${char.properties.read}, write=${char.properties.write}, indicate=${char.properties.indicate}`, 'info');
-    });
-    // --- КОНЕЦ ДОБАВЛЕННОГО ЛОГИРОВАНИЯ ---
 
-    // ИСПРАВЛЕНИЕ: Перебираем найденные характеристики и назначаем их в объект 'characteristics'
-    for (let char of chars) {
-        const uuid = char.uuid.toLowerCase();
+    /**
+    * Находит все необходимые BLE-характеристики из одного или нескольких сервисов
+    * и сохраняет их в объекте `characteristics`.
+    * @param {BluetoothRemoteGATTService} service1 - Первый объект сервиса.
+    * @param {BluetoothRemoteGATTService} [service2] - Второй объект сервиса (опционально).
+    */
+    async function findCharacteristics(service1, service2 = null) { // <-- ИЗМЕНЕНА сигнатура
+        log('Поиск характеристик...');
+    
+        let allChars = []; // Буфер для всех найденных характеристик
+    
+        // Поиск характеристик в первом сервисе
+        let chars1 = await service1.getCharacteristics();
+        allChars = allChars.concat(chars1);
+        log(`Найдено ${chars1.length} характеристик в Сервисе 1.`);
+
+        // Если есть второй сервис, ищем характеристики и в нем
+        if (service2) {
+            let chars2 = await service2.getCharacteristics();
+            allChars = allChars.concat(chars2);
+            log(`Найдено ${chars2.length} характеристик в Сервисе 2.`);
+        }
+    
+        log(`Всего найдено ${allChars.length} характеристик.`); // Логируем общее количество найденных
+    
+        allChars.forEach(char => { // Теперь перебираем ВСЕ найденные характеристики
+            log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}. Свойства: notify=${char.properties.notify}, read=${char.properties.read}, write=${char.properties.write}, indicate=${char.properties.indicate}`, 'info');
+        });
+
+        // ИСПРАВЛЕНИЕ: Перебираем найденные характеристики и назначаем их в объект 'characteristics'
+        for (let char of allChars) { // Итерируем по allChars
+            const uuid = char.uuid.toLowerCase();
         
-        if (uuid.includes('26a1')) characteristics.targetHum = char;
-        else if (uuid.includes('26a2')) characteristics.currentTemp = char;
-        else if (uuid.includes('26a3')) characteristics.currentHum = char;
-        else if (uuid.includes('26a4')) characteristics.allSettings = char;
-        else if (uuid.includes('26a5')) characteristics.sysInfo = char;
-        else if (uuid.includes('26a6')) characteristics.k10 = char;
-        else if (uuid.includes('26a7')) characteristics.command = char;
+            if (uuid.includes('26a1')) characteristics.targetHum = char;
+            else if (uuid.includes('26a2')) characteristics.currentTemp = char;
+            else if (uuid.includes('26a3')) characteristics.currentHum = char;
+            else if (uuid.includes('26a4')) characteristics.allSettings = char;
+            else if (uuid.includes('26a5')) characteristics.sysInfo = char;
+            else if (uuid.includes('26a6')) characteristics.k10 = char;
+            else if (uuid.includes('26a7')) characteristics.command = char;
+        }
+
     }
 
     // ИСПРАВЛЕНИЕ: Проверяем, что все ожидаемые характеристики были найдены
@@ -478,6 +501,7 @@ async function disconnectFromDevice() {
     // Сбрасываем все BLE-объекты, но оставляем структуру характеристик с null
     gattServer = null;
     service = null;
+    service2 = null; // <-- Сбрасываем второй сервис
     for (const key in characteristics) {
         characteristics[key] = null; // Обнуляем каждую характеристику
     }
