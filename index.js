@@ -923,12 +923,20 @@ function parseK10Status(data) {
  * @param {string} data - Строка со всеми настройками (например, "targetHumidity=50,lockHoldTime=1000,...").
  */
 function parseAndDisplaySettings(data) {
+    log(`DEBUG: Received settings data for parsing: '${data}' (length: ${data.length})`, 'info'); // логирование полученных данных
     let el = document.getElementById('settings-display');
     if (!el) {
         el = document.createElement('div');
         el.id = 'settings-display';
         el.className = 'settings-card';
         document.querySelector('.container').appendChild(el);
+    }
+
+    if (data.length === 0) { // Если строка пуста, явно выходим, чтобы не создавать пустые настройки
+        log('WARN: Received empty settings data. Not displaying any settings.', 'warn');
+        // Очистите секцию настроек, чтобы ничего не отображалось, кроме кнопок.
+        // Ваш текущий код уже пересоздает .settings-card, так что просто ничего не будет добавляться.
+        return;
     }
     
     el.innerHTML = '<h2>⚙️ Настройки системы</h2>'; // Очищаем и добавляем заголовок
