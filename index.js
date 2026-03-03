@@ -57,6 +57,12 @@ let statusLed = null;
 let statusText = null;
 let debugLogElement = null;
 
+// --- BLE-объекты ---
+let bluetoothDevice = null;  
+let gattServer = null;       
+let primaryService1 = null;  
+let primaryService2 = null;   
+
 // =========================================================================
 // ИНИЦИАЛИЗАЦИЯ И ОБЩИЕ УТИЛИТЫ
 // =========================================================================
