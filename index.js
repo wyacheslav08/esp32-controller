@@ -1,5 +1,5 @@
 /**
- * main.js
+ * index.js
  *
  * Этот файл содержит логику JavaScript для веб-интерфейса BLE-устройства "GuitarCabinet".
  * Он отвечает за подключение к устройству, чтение и запись характеристик BLE,
@@ -9,32 +9,36 @@
 // =========================================================================
 // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И КОНСТАНТЫ
 // =========================================================================
-
-// UUID сервисов и характеристик BLE
-const BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-const BLE_SERVICE_UUID_2 = "4fafc202-1fb5-459e-8fcc-c5c9c331914b";
+// Service 1 Characteristics (без изменений)
 const BLE_CHAR_TARGET_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a1";
 const BLE_CHAR_CURRENT_TEMP_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a2";
 const BLE_CHAR_CURRENT_HUM_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a3";
-const BLE_CHAR_ALL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4";
-const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 const BLE_CHAR_K10_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a6";
 const BLE_CHAR_COMMAND_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a7";
 
-// Объекты BLE
-let bluetoothDevice = null;
-let gattServer = null;
-let primaryService1 = null; // Глобальная переменная для первого сервиса
-let primaryService2 = null; // Глобальная переменная для второго сервиса
-// Инициализируем характеристики со всеми ожидаемыми UUID, устанавливая их в null
+// Service 2 Characteristics (НОВЫЕ / ИЗМЕНЕННЫЕ)
+const BLE_CHAR_GENERAL_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a4"; // Переименовано из ALL
+const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
+
+// НОВЫЕ характеристики настроек для Service 2
+const BLE_CHAR_HUMIDITY_LOGIC_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const BLE_CHAR_CALIBRATION_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9";
+const BLE_CHAR_AUTO_REBOOT_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa";
+const BLE_CHAR_STATISTICS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab"; // Только для чтения
+
+// Обновляем объект characteristics для хранения ссылок на новые характеристики
 let characteristics = {
     targetHum: null,
     currentTemp: null,
     currentHum: null,
-    allSettings: null,
+    generalSettings: null, // Переименовано из allSettings
     sysInfo: null,
     k10: null,
-    command: null
+    command: null,
+    humidityLogicSettings: null, // Новая
+    calibrationSettings: null,   // Новая
+    autoRebootSettings: null,    // Новая
+    statistics: null             // Новая
 };
 
 // Управление опросом данных
@@ -61,35 +65,40 @@ let debugLogElement = null;
  * Инициализирует метаданные для всех настроек.
  * Это помогает динамически создавать элементы управления и парсить/отправлять данные.
  */
-function initializeSettingDefinitions() {
-    allSettingDefinitions = [
-        // --- Основные настройки ---
+// Группы определений настроек
+const settingGroups = {
+    general: [
         { key: 'targetHumidity', label: 'Целевая влажность', type: 'number', min: 0, max: 100, step: 1, unit: '%' },
         { key: 'lockHoldTime', label: 'Время удержания (K10)', type: 'number', min: 100, max: 5000, step: 100, unit: ' мс' },
-        
-        // --- Таймауты ---
         { key: 'lockTimeIndex', label: 'Таймаут блокировки меню', type: 'select', options: [
-            {value: "0", text: "ОТКЛ"}, {value: "1", text: "30 сек."}, {value: "2", text: "1 мин."}, 
-            {value: "3", text: "2 мин."}, {value: "4", text: "5 мин."}
+            { value: "0", text: "ОТКЛ" }, 
+            { value: "1", text: "30 сек." }, 
+            { value: "2", text: "1 мин." },
+            { value: "3", text: "5 мин." }, 
+            { value: "4", text: "10 мин." }
         ]},
+        // Тайм-аут активности меню
         { key: 'menuTimeoutOptionIndex', label: 'Таймаут меню', type: 'select', options: [
-            {value: "0", text: "ОТКЛ"}, {value: "1", text: "15 сек."}, {value: "2", text: "30 сек."}, 
-            {value: "3", text: "1 мин."}, {value: "4", text: "2 мин."}
+            { value: "0", text: "ОТКЛ" },
+            { value: "1", text: "15 сек." },
+            { value: "2", text: "30 сек." },
+            { value: "3", text: "1 мин." },
+            { value: "4", text: "2 мин." }
         ]},
+        // ОБНОВЛЕНО: Тайм-аут экрана (убедитесь, что значения совпадают с .cpp)
         { key: 'screenTimeoutOptionIndex', label: 'Таймаут экрана', type: 'select', options: [
-            {value: "0", text: "ОТКЛ"}, {value: "1", text: "30 сек."}, {value: "2", text: "1 мин."}, 
-            {value: "3", text: "5 мин."}, {value: "4", text: "10 мин."}
+            { value: "0", text: "ОТКЛ" },
+            { value: "1", text: "30 сек." },
+            { value: "2", text: "1 мин." },
+            { value: "3", text: "5 мин." },
+            { value: "4", text: "10 мин." }
         ]},
-
-        // --- Звуковые оповещения ---
         { key: 'doorSoundEnabled', label: 'Звук открытой двери', type: 'checkbox' },
-        { key: 'waterSilicaSoundEnabled', label: 'Звук ресурсов', type: 'checkbox' },
-
-        // --- Подогрев воды ---
+        { key: 'waterSilicaSoundEnabled', label: 'Звук низкого уровня ресурсов', type: 'checkbox' },
         { key: 'waterHeaterEnabled', label: 'Подогрев воды', type: 'checkbox' },
         { key: 'waterHeaterMaxTemp', label: 'Макс. темп. подогрева', type: 'number', min: 20, max: 45, step: 1, unit: '°C' }, // Максимум 45°C для безопасности
-
-        // --- Логика влажности ---
+    ],
+    humidityLogic: [
         { key: 'deadZonePercent', label: 'Мертвая зона', type: 'number', min: 0.1, max: 10.0, step: 0.1, unit: '%', float: true },
         { key: 'minHumidityChangeForTimeout', label: 'Мин. изменение H% (тайм.)', type: 'number', min: 0.1, max: 5.0, step: 0.1, unit: '%', float: true },
         { key: 'maxOperationDuration', label: 'Макс. время работы', type: 'number', min: 1, max: 60, step: 1, unit: ' мин' },
@@ -99,27 +108,28 @@ function initializeSettingDefinitions() {
         { key: 'humidityHysteresis', label: 'Гистерезис влажности', type: 'number', min: 0.1, max: 5.0, step: 0.1, unit: '%', float: true },
         { key: 'resourceLowFaultThreshold', label: 'Порог "Мало ресурсов"', type: 'number', min: 1, max: 10, step: 1 },
         { key: 'resourceEmptyFaultThreshold', label: 'Порог "Нет ресурсов"', type: 'number', min: 1, max: 20, step: 1 },
-        
-        // --- Калибровка DHT ---
+    ],
+    calibration: [
         { key: 'tempOffsetTop', label: 'Смещение темп. (верх.)', type: 'number', min: -20, max: 20, step: 1, unit: '°C' },
         { key: 'humOffsetTop', label: 'Смещение влаж. (верх.)', type: 'number', min: -20, max: 20, step: 1, unit: '%' },
         { key: 'tempOffsetHum', label: 'Смещение темп. (увл.)', type: 'number', min: -20, max: 20, step: 1, unit: '°C' },
         { key: 'humOffsetHum', label: 'Смещение влаж. (увл.)', type: 'number', min: -20, max: 20, step: 1, unit: '%' },
-
-        // --- Авто-перезагрузка ---
+    ],
+    autoReboot: [
         { key: 'autoRebootEnabled', label: 'Авто-перезагрузка', type: 'checkbox' },
         { key: 'autoRebootHour', label: 'Час перезагрузки', type: 'number', min: 0, max: 23, step: 1, unit: ' ч' },
         { key: 'autoRebootMinute', label: 'Минута перезагрузки', type: 'number', min: 0, max: 59, step: 1, unit: ' мин' },
         { key: 'autoRebootDays', label: 'Интервал перезагрузки', type: 'number', min: 1, max: 30, step: 1, unit: ' дней' },
-
-        // --- Статистика (только для чтения) ---
+    ],
+    statistics: [
         { key: 'resetCount', label: 'Счетчик ручных сбросов', type: 'readonly' },
         { key: 'wdtResetCount', label: 'Счетчик WDT сбросов', type: 'readonly' },
         { key: 'autoRebootCounter', label: 'Счетчик авто-перезагрузок', type: 'readonly' },
         { key: 'totalRebootCounter', label: 'Общий счетчик перезагрузок', type: 'readonly' },
-        { key: 'lastRebootTimestamp', label: 'Время последней перезагрузки', type: 'readonly', timestamp: true } // Unix timestamp
-    ];
-}
+        // ДОБАВЛЕНО: Время последней перезагрузки (с форматированием timestamp)
+        { key: 'lastRebootTimestamp', label: 'Время последней перезагрузки', type: 'readonly', timestamp: true }
+    ]
+};
 /**
  * Добавляет стили CSS динамически к странице.
  * Это обеспечивает, что интерфейс выглядит правильно без отдельного файла CSS.
@@ -195,6 +205,42 @@ function addStyles() {
         .status-on { color: #4caf50; font-weight: bold; }
         .status-off { color: #f44336; font-weight: bold; }
         .status-warning { color: #ff9800; font-weight: bold; }
+        .tabs {
+        display: flex;
+        flex-wrap: wrap; /* Позволяет вкладкам переноситься на меньших экранах */
+        gap: 5px;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #e0e0e0;
+        padding-bottom: 5px;
+    }
+    .tab-button {
+        background-color: #f0f2f5;
+        color: #555;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 8px 8px 0 0;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: background-color 0.3s, color 0.3s;
+    }
+    .tab-button:hover {
+        background-color: #e0e7eb;
+    }
+    .tab-button.active {
+        background-color: #2196f3;
+        color: white;
+        font-weight: bold;
+        border-bottom: 2px solid #2196f3;
+    }
+    .settings-tab {
+        display: none; /* Скрываем все вкладки по умолчанию */
+        padding: 15px 0;
+    }
+    .settings-tab.active {
+        display: block; /* Показываем только активную вкладку */
+    }
+
     `;
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
@@ -335,7 +381,7 @@ async function findCharacteristics(service1, service2 = null) {
         log(`Найдено ${chars2.length} характеристик в Сервисе 2.`);
     }
     
-    log(`Всего найдено ${allChars.length} характеристик.`); // Логируем общее количество найденных
+    log(`Всего найдено ${allChars.length} характеристик.`);
     
     allChars.forEach(char => {
         log(`  Обнаружена характеристика UUID: ${char.uuid.toLowerCase()}. Свойства: notify=${char.properties.notify}, read=${char.properties.read}, write=${char.properties.write}, indicate=${char.properties.indicate}`, 'info');
@@ -348,13 +394,16 @@ async function findCharacteristics(service1, service2 = null) {
         if (uuid.includes('26a1')) characteristics.targetHum = char;
         else if (uuid.includes('26a2')) characteristics.currentTemp = char;
         else if (uuid.includes('26a3')) characteristics.currentHum = char;
-        else if (uuid.includes('26a4')) characteristics.allSettings = char;
+        else if (uuid.includes('26a4')) characteristics.generalSettings = char; // Переименовано
         else if (uuid.includes('26a5')) characteristics.sysInfo = char;
         else if (uuid.includes('26a6')) characteristics.k10 = char;
         else if (uuid.includes('26a7')) characteristics.command = char;
+        else if (uuid.includes('26a8')) characteristics.humidityLogicSettings = char; // Новая
+        else if (uuid.includes('26a9')) characteristics.calibrationSettings = char;   // Новая
+        else if (uuid.includes('26aa')) characteristics.autoRebootSettings = char;    // Новая
+        else if (uuid.includes('26ab')) characteristics.statistics = char;             // Новая
     }
 
-    // Проверяем, что все ожидаемые характеристики были найдены
     let allExpectedFound = true;
     for (const key in characteristics) {
         if (characteristics[key] === null) {
@@ -363,17 +412,15 @@ async function findCharacteristics(service1, service2 = null) {
         }
     }
     if (allExpectedFound) {
-        log(`✅ Все 7 характеристик обнаружены клиентом.`, 'success');
+        log(`✅ Все ${Object.keys(characteristics).length} характеристик обнаружены клиентом.`, 'success'); // Обновлено число
     } else {
         log(`⚠️ Некоторые характеристики не были обнаружены. Работа с ними может быть ограничена.`, 'warn');
     }
 
-    // Добавим небольшую задержку перед настройкой уведомлений, на всякий случай
     await new Promise(resolve => setTimeout(resolve, 500));
 
     log(`✅ Характеристики сопоставлены. Настройка уведомлений...`);
 
-    // Вспомогательная функция для безопасной подписки
     const safeStartNotify = async (char, name, parser) => {
         if (!char) { 
             log(`🔔 NOTIFY: Характеристика '${name}' не найдена. Пропускаем настройку уведомлений.`, 'info');
@@ -401,7 +448,14 @@ async function findCharacteristics(service1, service2 = null) {
         }
     };
 
-    // Подписываемся по очереди с обработкой ошибок
+    // Подписываемся на уведомления для всех настроек
+    await safeStartNotify(characteristics.generalSettings, 'Общие настройки', (data) => parseAndUpdateSettingsUI(data, 'general'));
+    await safeStartNotify(characteristics.humidityLogicSettings, 'Логика влажности', (data) => parseAndUpdateSettingsUI(data, 'humidityLogic'));
+    await safeStartNotify(characteristics.calibrationSettings, 'Калибровка', (data) => parseAndUpdateSettingsUI(data, 'calibration'));
+    await safeStartNotify(characteristics.autoRebootSettings, 'Авто-перезагрузка', (data) => parseAndUpdateSettingsUI(data, 'autoReboot'));
+    await safeStartNotify(characteristics.statistics, 'Статистика', (data) => parseAndUpdateSettingsUI(data, 'statistics'));
+    
+    // Существующие подписки
     await safeStartNotify(characteristics.currentTemp, 'Температура', (data) => {
         const temp = parseFloat(data.substring(2));
         if (!isNaN(temp)) updateTempDisplay(temp);
@@ -412,8 +466,6 @@ async function findCharacteristics(service1, service2 = null) {
         if (!isNaN(hum)) updateHumDisplay(hum);
     });
 
-    // ИСПРАВЛЕНИЕ: Специальная обработка для SysInfo.
-    // Если уведомления не включаются, запускаем опрос.
     const sysInfoNotificationsEnabled = await safeStartNotify(characteristics.sysInfo, 'Система', parseSysInfo);
     if (!sysInfoNotificationsEnabled && characteristics.sysInfo) {
         log('⚠️ Уведомления для SysInfo не поддерживаются или не удалось включить. Запускаем опрос SysInfo.', 'warn');
@@ -430,8 +482,6 @@ async function findCharacteristics(service1, service2 = null) {
     }
     
     await safeStartNotify(characteristics.k10, 'K10/Замок', parseK10Status);
-
-    await safeStartNotify(characteristics.allSettings, 'Настройки', parseAndDisplaySettings);
 
     log(`✅ Настройка уведомлений завершена`, 'success');
 }
@@ -541,13 +591,8 @@ function handleDisconnect() {
  */
 async function loadAllData() {
     log('📥 Загрузка всех данных с устройства...');
-    
-    // --- ДОБАВИТЬ ЭТУ СТРОКУ ---
-    // Добавляем небольшую задержку, чтобы ESP32 гарантированно успел обновить
-    // характеристику AllSettings в своем onConnect коллбэке, прежде чем клиент ее прочитает.
-    await new Promise(resolve => setTimeout(resolve, 300)); 
-    // --- КОНЕЦ ДОБАВЛЕНИЯ ---
-    
+    await new Promise(resolve => setTimeout(resolve, 300)); // Задержка для инициализации ESP32
+
     if (characteristics.currentTemp) {
         const tempData = await readCharacteristic(characteristics.currentTemp, 'температуры');
         if (tempData && tempData.startsWith('T:')) {
@@ -564,28 +609,62 @@ async function loadAllData() {
         }
     } else { log(`❌ Характеристика 'Влажность' не найдена для загрузки.`, 'error'); }
     
-    // --- ЭТО КРИТИЧЕСКОЕ ЧТЕНИЕ ---
-    if (characteristics.allSettings) {
-        const settingsData = await readCharacteristic(characteristics.allSettings, 'настроек');
-        if (settingsData) {
-            parseAndDisplaySettings(settingsData);
-        } else {
-             log(`❌ Не удалось прочитать данные настроек.`, 'error');
-        }
-    } else { log(`❌ Характеристика 'Настройки' не найдена для загрузки.`, 'error'); }
-    
     if (characteristics.k10) {
         const k10Data = await readCharacteristic(characteristics.k10, 'K10');
-        if (k10Data) {
-            parseK10Status(k10Data);
-        }
+        if (k10Data) parseK10Status(k10Data);
     } else { log(`❌ Характеристика 'K10' не найдена для загрузки.`, 'error'); }
 
-    if (!characteristics.command) {
-        log(`❌ Характеристика 'Command' не найдена для использования.`, 'error');
-    }
+    // Инициализируем структуру отображения настроек
+    createSettingsDisplay();
+
+    // Загружаем только общие настройки при первом подключении
+    await loadSettingsForGroup('general');
 
     log('✅ Все данные загружены.', 'success');
+}
+
+/**
+ * Загружает настройки для конкретной группы с устройства.
+ * @param {string} groupId - ID группы настроек для загрузки.
+ */
+async function loadSettingsForGroup(groupId) {
+    let char = null;
+    let charName = '';
+
+    switch (groupId) {
+        case 'general':
+            char = characteristics.generalSettings;
+            charName = 'Общие настройки';
+            break;
+        case 'humidityLogic':
+            char = characteristics.humidityLogicSettings;
+            charName = 'Настройки логики влажности';
+            break;
+        case 'calibration':
+            char = characteristics.calibrationSettings;
+            charName = 'Настройки калибровки DHT';
+            break;
+        case 'autoReboot':
+            char = characteristics.autoRebootSettings;
+            charName = 'Настройки авто-перезагрузки';
+            break;
+        case 'statistics':
+            char = characteristics.statistics;
+            charName = 'Статистика';
+            break;
+        default:
+            log(`ERROR: Неизвестный ID группы настроек: ${groupId}`, 'error');
+            return;
+    }
+
+    if (char) {
+        const data = await readCharacteristic(char, charName);
+        if (data) {
+            parseAndUpdateSettingsUI(data, groupId);
+        }
+    } else {
+        log(`❌ Характеристика '${charName}' не найдена для группы '${groupId}'.`, 'error');
+    }
 }
 
 /**
@@ -918,100 +997,49 @@ function parseK10Status(data) {
 // ФУНКЦИИ УПРАВЛЕНИЯ НАСТРОЙКАМИ
 // =========================================================================
 
+// --- НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ UI ---
 /**
- * Парсит строку со всеми настройками и динамически создает/обновляет UI-элементы для них.
- * @param {string} data - Строка со всеми настройками (например, "targetHumidity=50,lockHoldTime=1000,...").
+ * Динамически генерирует HTML для группы настроек.
+ * @param {string} groupId - ID группы настроек (например, 'general', 'humidityLogic').
+ * @param {Array<Object>} definitions - Массив определений настроек для этой группы.
+ * @param {Object} values - Текущие значения настроек.
+ * @param {boolean} [isReadonlyGroup=false] - Должна ли вся группа быть только для чтения (например, статистика).
+ * @returns {string} HTML-строка для группы настроек.
  */
-function parseAndDisplaySettings(data) {
-    log(`DEBUG: Received settings data for parsing: '${data}' (length: ${data.length})`, 'info'); // логирование полученных данных
-    let el = document.getElementById('settings-display');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'settings-display';
-        el.className = 'settings-card';
-        document.querySelector('.container').appendChild(el);
-    }
-
-    if (data.length === 0) { // Если строка пуста, явно выходим, чтобы не создавать пустые настройки
-        log('WARN: Received empty settings data. Not displaying any settings.', 'warn');
-        // Очистите секцию настроек, чтобы ничего не отображалось, кроме кнопок.
-        // Ваш текущий код уже пересоздает .settings-card, так что просто ничего не будет добавляться.
-        return;
-    }
-    
-    el.innerHTML = '<h2>⚙️ Настройки системы</h2>'; // Очищаем и добавляем заголовок
-    
-    const settings = {};
-    data.split(',').forEach(pair => {
-        const [k, v] = pair.split('=');
-        if (k && v) {
-            settings[k.trim()] = v.trim();
-        }
-    });
-    
-    currentSettingsValues = settings; // Сохраняем текущие значения для отслеживания изменений
-    
-    let currentGroup = ''; // Для группировки настроек по разделам
-
-    // Перебираем все предопределенные настройки
-    allSettingDefinitions.forEach(def => {
+function generateSettingsGroupHTML(groupId, definitions, values, isReadonlyGroup = false) {
+    let html = '';
+    definitions.forEach(def => {
         const { key, label, type, min, max, step, unit, options, float, timestamp } = def;
-        const value = settings[key]; // Получаем значение из прочитанных данных
+        const value = values[key];
+        // Если значение отсутствует в текущих данных, пропускаем его.
+        // Это может произойти, если клиент еще не прочитал эту характеристику.
+        if (value === undefined) return;
 
-        if (value === undefined) {
-             return; 
-        }
-        
-        // Определяем группу для текущей настройки (УТОЧНЕНО)
-        let groupName = 'Прочие'; 
-        if (['targetHumidity', 'lockHoldTime'].includes(key)) groupName = 'Основные';
-        else if (['lockTimeIndex', 'menuTimeoutOptionIndex', 'screenTimeoutOptionIndex'].includes(key)) groupName = 'Таймауты';
-        else if (['doorSoundEnabled', 'waterSilicaSoundEnabled'].includes(key)) groupName = 'Звуковые оповещения';
-        else if (['waterHeaterEnabled', 'waterHeaterMaxTemp'].includes(key)) groupName = 'Подогрев воды';
-        else if (['deadZonePercent', 'minHumidityChangeForTimeout', 'maxOperationDuration', 'operationCooldown', 'maxSafeHumidity', 'resourceCheckDiff', 'humidityHysteresis', 'resourceLowFaultThreshold', 'resourceEmptyFaultThreshold'].includes(key)) groupName = 'Логика влажности';
-        else if (['tempOffsetTop', 'humOffsetTop', 'tempOffsetHum', 'humOffsetHum'].includes(key)) groupName = 'Калибровка DHT';
-        else if (['autoRebootEnabled', 'autoRebootHour', 'autoRebootMinute', 'autoRebootDays'].includes(key)) groupName = 'Авто-перезагрузка';
-        else if (['resetCount', 'wdtResetCount', 'autoRebootCounter', 'totalRebootCounter', 'lastRebootTimestamp'].includes(key)) groupName = 'Статистика';
-
-        // Создаем новую группу, если она изменилась
-        if (groupName !== currentGroup) {
-            const groupDiv = document.createElement('div');
-            groupDiv.className = 'settings-group';
-            groupDiv.innerHTML = `<h3>${groupName}</h3>`;
-            el.appendChild(groupDiv);
-            currentGroup = groupName;
-        }
-
-        const groupEl = el.querySelector(`.settings-group:last-child`);
-        const settingItem = document.createElement('div');
-        settingItem.className = 'setting-item';
-        
         let controlHtml = '';
-        
-        // Генерация HTML для различных типов элементов управления
+        const readonlyAttr = (isReadonlyGroup || type === 'readonly') ? 'readonly' : '';
+        const disabledAttr = (isReadonlyGroup || type === 'readonly') ? 'disabled' : '';
+
         if (type === 'number') {
             const parsedValue = float ? parseFloat(value) : parseInt(value);
             controlHtml = `
-                <label for="setting-${key}">${label}: </label>
-                <input type="number" 
-                       id="setting-${key}" 
-                       value="${parsedValue}" 
-                       min="${min}" 
-                       max="${max}" 
-                       step="${step || 1}" 
-                       ${(def.readonly || type === 'readonly') ? 'readonly' : ''}>${unit || ''}
+                <input type="number"
+                       id="setting-${key}"
+                       data-group="${groupId}"
+                       value="${parsedValue}"
+                       min="${min}"
+                       max="${max}"
+                       step="${step || 1}"
+                       ${readonlyAttr}>${unit || ''}
             `;
         } else if (type === 'select') {
             controlHtml = `
-                <label for="setting-${key}">${label}: </label>
-                <select id="setting-${key}" ${(def.readonly || type === 'readonly') ? 'disabled' : ''}>
+                <select id="setting-${key}" data-group="${groupId}" ${disabledAttr}>
                     ${options.map(opt => `<option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>${opt.text}</option>`).join('')}
                 </select>
             `;
         } else if (type === 'checkbox') {
             controlHtml = `
-                <input type="checkbox" id="setting-${key}" ${value === '1' ? 'checked' : ''} ${(def.readonly || type === 'readonly') ? 'disabled' : ''}>
-                <label for="setting-${key}">${label}</label>
+                <input type="checkbox" id="setting-${key}" data-group="${groupId}" ${value === '1' ? 'checked' : ''} ${disabledAttr}>
             `;
         } else if (type === 'readonly') {
             let displayValue = value;
@@ -1020,86 +1048,216 @@ function parseAndDisplaySettings(data) {
                 const date = new Date(parseInt(value) * 1000);
                 displayValue = date.toLocaleString(); // Использует локальный формат даты и времени
             }
-            controlHtml = `
-                <label>${label}: </label>
-                <strong>${displayValue}</strong>
-            `;
+            controlHtml = `<strong>${displayValue}</strong>`;
         }
-        
-        settingItem.innerHTML = controlHtml;
-        groupEl.appendChild(settingItem);
+
+        html += `
+            <div class="setting-item">
+                ${type === 'checkbox' ? `${controlHtml}<label for="setting-${key}">${label}</label>` : `<label for="setting-${key}">${label}: </label>${controlHtml}`}
+            </div>
+        `;
     });
-    
-    // Добавляем кнопки управления в конце секции настроек
-    el.innerHTML += `
+    return html;
+}
+
+/**
+ * Создает начальный вид настроек с вкладками.
+ */
+function createSettingsDisplay() {
+    let el = document.getElementById('settings-display');
+    if (el) el.remove(); // Удаляем существующий элемент, если есть
+
+    el = document.createElement('div');
+    el.id = 'settings-display';
+    el.className = 'settings-card';
+    document.querySelector('.container').appendChild(el);
+
+    el.innerHTML = `
+        <h2>⚙️ Настройки системы</h2>
+        <div class="tabs">
+            <button class="tab-button active" data-tab="general">Общие</button>
+            <button class="tab-button" data-tab="humidityLogic">Логика влажности</button>
+            <button class="tab-button" data-tab="calibration">Калибровка DHT</button>
+            <button class="tab-button" data-tab="autoReboot">Авто-перезагрузка</button>
+            <button class="tab-button" data-tab="statistics">Статистика</button>
+        </div>
+        <div id="settings-content">
+            <div id="settings-tab-general" class="settings-tab active"></div>
+            <div id="settings-tab-humidityLogic" class="settings-tab"></div>
+            <div id="settings-tab-calibration" class="settings-tab"></div>
+            <div id="settings-tab-autoReboot" class="settings-tab"></div>
+            <div id="settings-tab-statistics" class="settings-tab"></div>
+        </div>
         <div class="button-group">
-            <button id="save-settings" class="btn btn-primary">💾 Сохранить все</button>
+            <button id="save-all-settings" class="btn btn-primary">💾 Сохранить все</button>
             <button id="refresh-settings" class="btn btn-secondary">🔄 Обновить</button>
             <button id="reset-defaults" class="btn btn-danger">⚠️ Сброс до заводских</button>
             <button id="reboot-device" class="btn btn-warning">🔄 Перезагрузить</button>
         </div>
     `;
-    
+
+    // Добавляем слушатели событий для вкладок
+    el.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', async (e) => {
+            el.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+            el.querySelectorAll('.settings-tab').forEach(tab => tab.classList.remove('active'));
+            const tabId = `settings-tab-${e.target.dataset.tab}`;
+            document.getElementById(tabId).classList.add('active');
+            
+            // Загружаем настройки для только что активированной вкладки
+            await loadSettingsForGroup(e.target.dataset.tab);
+        });
+    });
+
     // Назначаем обработчики событий для кнопок
-    document.getElementById('save-settings').onclick = sendSettingsToDevice;
+    document.getElementById('save-all-settings').onclick = sendSettingsToDevice;
     document.getElementById('refresh-settings').onclick = loadAllData;
     document.getElementById('reset-defaults').onclick = confirmAndSendReset;
     document.getElementById('reboot-device').onclick = confirmAndSendReboot;
 }
 
 /**
- * Собирает значения из всех интерактивных элементов управления настройками,
- * формирует строку и отправляет ее на устройство через характеристику `allSettings`.
+ * Парсит полученные данные для конкретной группы настроек и обновляет UI.
+ * @param {string} data - Сырая строка настроек.
+ * @param {string} groupId - ID группы настроек (например, 'general').
  */
-async function sendSettingsToDevice() {
-    if (!characteristics.allSettings || !gattServer?.connected) {
-        log('❌ Характеристика AllSettings не найдена или BLE не подключен. Не могу сохранить настройки.', 'error');
+function parseAndUpdateSettingsUI(data, groupId) {
+    log(`DEBUG: Received data for group '${groupId}': '${data}'`, 'info');
+    if (!data || data.length === 0) {
+        log(`WARN: Received empty data for settings group '${groupId}'.`, 'warn');
         return;
     }
-    
-    const updatedSettings = {};
-    let settingsString = '';
-    
-    // Проходим по всем предопределенным настройкам
-    allSettingDefinitions.forEach(def => {
-        const { key, type, float } = def;
-        const element = document.getElementById(`setting-${key}`);
-        
-        if (!element || type === 'readonly') return; // Пропускаем статистику и элементы без ID
-        
-        let valueToSend;
-        if (type === 'checkbox') {
-            valueToSend = element.checked ? '1' : '0';
-        } else if (type === 'select') {
-            valueToSend = element.value;
-        } else if (type === 'number') {
-            valueToSend = float ? parseFloat(element.value).toFixed(1) : parseInt(element.value);
-        }
-        
-        // Отправляем только те настройки, которые изменились по сравнению с последними прочитанными
-        // Преобразуем valueToSend и currentSettingsValues[key] в строки для сравнения, чтобы избежать проблем с типами
-        if (String(valueToSend) !== String(currentSettingsValues[key])) {
-             updatedSettings[key] = valueToSend;
-             if (settingsString !== '') settingsString += ',';
-             settingsString += `${key}=${valueToSend}`;
+
+    const settings = {};
+    data.split(',').forEach(pair => {
+        const [k, v] = pair.split('=');
+        if (k && v) {
+            settings[k.trim()] = v.trim();
         }
     });
 
-    if (settingsString === '') {
-        log('ℹ️ Нет измененных настроек для отправки.', 'info');
+    // Объединяем новые значения в глобальный объект currentSettingsValues
+    Object.assign(currentSettingsValues, settings);
+
+    const definitions = settingGroups[groupId];
+    if (!definitions) {
+        log(`ERROR: No definitions found for settings group '${groupId}'.`, 'error');
         return;
     }
-    
-    log(`📤 Отправка настроек: ${settingsString}`, 'info');
-    
-    try {
-        await characteristics.allSettings.writeValue(new TextEncoder().encode(settingsString));
-        log('✅ Настройки успешно отправлены. Обновление через 1 секунду...', 'success');
-        // Обновляем локальные значения после успешной отправки
-        Object.assign(currentSettingsValues, updatedSettings); 
-        setTimeout(loadAllData, 1000); // Перезагружаем все данные для проверки, что изменения применились
-    } catch (e) {
-        log(`❌ Ошибка при отправке настроек: ${e.message}`, 'error');
+
+    const tabElement = document.getElementById(`settings-tab-${groupId}`);
+    if (tabElement) {
+        tabElement.innerHTML = generateSettingsGroupHTML(groupId, definitions, currentSettingsValues, groupId === 'statistics');
+    }
+
+    // После обновления HTML, заново прикрепляем слушатели событий к полям ввода
+    definitions.forEach(def => {
+        const element = document.getElementById(`setting-${def.key}`);
+        if (element && (def.type === 'number' || def.type === 'select' || def.type === 'checkbox')) {
+            // Здесь можно добавить слушатели 'change' или 'input', если нужно сохранять изменения сразу.
+            // Сейчас изменения собираются при нажатии кнопки 'Сохранить все'.
+        }
+    });
+}
+
+/**
+ * Собирает измененные значения из всех групп настроек и отправляет их в соответствующие характеристики.
+ */
+async function sendSettingsToDevice() {
+    let pendingUpdates = {
+        general: [],
+        humidityLogic: [],
+        calibration: [],
+        autoReboot: []
+    };
+
+    // Перебираем все определения настроек, чтобы найти изменения
+    for (const groupId in settingGroups) {
+        const definitions = settingGroups[groupId];
+        definitions.forEach(def => {
+            const { key, type, float } = def;
+            // Группа статистики только для чтения, пропускаем
+            if (groupId === 'statistics') return;
+
+            const element = document.getElementById(`setting-${key}`);
+            if (!element) return;
+
+            let newValue;
+            if (type === 'checkbox') {
+                newValue = element.checked ? '1' : '0';
+            } else if (type === 'select') {
+                newValue = element.value;
+            } else if (type === 'number') {
+                // Приводим к строке, чтобы избежать проблем с .toFixed() для целых чисел
+                newValue = float ? parseFloat(element.value).toFixed(1) : parseInt(element.value).toString();
+            } else { // type === 'readonly'
+                return;
+            }
+
+            // Добавляем в ожидающие обновления только если значение действительно изменилось
+            // Сравниваем строковые представления, чтобы избежать проблем с типами
+            if (String(newValue) !== String(currentSettingsValues[key])) {
+                pendingUpdates[groupId].push(`${key}=${newValue}`);
+                currentSettingsValues[key] = newValue; // Немедленно обновляем локальный кэш
+            }
+        });
+    }
+
+    let allSent = true;
+    for (const groupId in pendingUpdates) {
+        const updates = pendingUpdates[groupId];
+        if (updates.length > 0) {
+            const settingsString = updates.join(',');
+            let char = null;
+            let charName = '';
+
+            switch (groupId) {
+                case 'general':
+                    char = characteristics.generalSettings;
+                    charName = 'Общие настройки';
+                    break;
+                case 'humidityLogic':
+                    char = characteristics.humidityLogicSettings;
+                    charName = 'Настройки логики влажности';
+                    break;
+                case 'calibration':
+                    char = characteristics.calibrationSettings;
+                    charName = 'Настройки калибровки DHT';
+                    break;
+                case 'autoReboot':
+                    char = characteristics.autoRebootSettings;
+                    charName = 'Настройки авто-перезагрузки';
+                    break;
+                default:
+                    log(`ERROR: Для группы '${groupId}' не определена характеристика.`, 'error');
+                    allSent = false;
+                    continue;
+            }
+
+            if (char && gattServer?.connected) {
+                log(`📤 Отправка '${charName}': ${settingsString}`, 'info');
+                try {
+                    await char.writeValue(new TextEncoder().encode(settingsString));
+                    log(`✅ '${charName}' успешно отправлены.`, 'success');
+                } catch (e) {
+                    log(`❌ Ошибка при отправке '${charName}': ${e.message}`, 'error');
+                    allSent = false;
+                }
+            } else {
+                log(`❌ Характеристика '${charName}' не найдена или BLE не подключен. Не могу сохранить настройки.`, 'error');
+                allSent = false;
+            }
+        }
+    }
+
+    if (allSent) {
+        log('✅ Все измененные настройки успешно отправлены.', 'success');
+        // Обновляем все данные, чтобы убедиться, что изменения применились,
+        // особенно для статистики, которая может измениться после сохранения.
+        setTimeout(loadAllData, 1000); 
+    } else {
+        log('❌ Некоторые настройки не удалось отправить.', 'error');
     }
 }
 
@@ -1153,10 +1311,14 @@ function getCharUUIDByName(key) {
         case 'targetHum': return BLE_CHAR_TARGET_HUM_UUID;
         case 'currentTemp': return BLE_CHAR_CURRENT_TEMP_UUID;
         case 'currentHum': return BLE_CHAR_CURRENT_HUM_UUID;
-        case 'allSettings': return BLE_CHAR_ALL_SETTINGS_UUID;
+        case 'generalSettings': return BLE_CHAR_GENERAL_SETTINGS_UUID; // Переименовано
         case 'sysInfo': return BLE_CHAR_SYS_INFO_UUID;
         case 'k10': return BLE_CHAR_K10_UUID;
         case 'command': return BLE_CHAR_COMMAND_UUID;
+        case 'humidityLogicSettings': return BLE_CHAR_HUMIDITY_LOGIC_SETTINGS_UUID; // Новая
+        case 'calibrationSettings': return BLE_CHAR_CALIBRATION_SETTINGS_UUID;   // Новая
+        case 'autoRebootSettings': return BLE_CHAR_AUTO_REBOOT_SETTINGS_UUID;    // Новая
+        case 'statistics': return BLE_CHAR_STATISTICS_UUID;             // Новая
         default: return 'UNKNOWN_UUID';
     }
 }
@@ -1166,8 +1328,6 @@ function getCharUUIDByName(key) {
 // =========================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-
-    
     // Инициализация ссылок на DOM-элементы
     statusLed = document.querySelector('.status-led');
     statusText = document.getElementById('statusText');
@@ -1190,10 +1350,8 @@ document.addEventListener('DOMContentLoaded', () => {
     debugLogElement = document.getElementById('debug-log'); // Сохраняем ссылку
     
     addStyles(); // Добавляем CSS стили
-    initializeSettingDefinitions(); // Инициализируем метаданные настроек
-    
+
     log('🚀 Веб-интерфейс загружен. Ожидание подключения...', 'info');
     updateStatus('Отключено', 'disconnected');
-
 });
 
