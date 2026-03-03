@@ -1054,7 +1054,14 @@ function generateSettingsGroupHTML(groupId, definitions, values, isReadonlyGroup
             if (timestamp) {
                 // Преобразуем Unix timestamp в читаемый формат
                 const date = new Date(parseInt(value) * 1000);
-                displayValue = date.toLocaleString(); // Использует локальный формат даты и времени
+                displayValue = date.toLocaleString('ru-RU', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
             }
             controlHtml = `<strong>${displayValue}</strong>`;
         }
