@@ -25,7 +25,6 @@ const BLE_CHAR_SYS_INFO_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a5";
 // НОВЫЕ характеристики настроек для Service 2
 const BLE_CHAR_HUMIDITY_LOGIC_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 const BLE_CHAR_CALIBRATION_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9";
-const BLE_CHAR_AUTO_REBOOT_SETTINGS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa";
 const BLE_CHAR_STATISTICS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab"; // Только для чтения
 
 // Обновляем объект characteristics для хранения ссылок на новые характеристики
@@ -37,10 +36,9 @@ let characteristics = {
     sysInfo: null,
     k10: null,
     command: null,
-    humidityLogicSettings: null, // Новая
-    calibrationSettings: null,   // Новая
-    autoRebootSettings: null,    // Новая
-    statistics: null             // Новая
+    humidityLogicSettings: null, 
+    calibrationSettings: null,   
+    statistics: null             
 };
 
 // Управление опросом данных
@@ -122,12 +120,6 @@ const settingGroups = {
         { key: 'humOffsetTop', label: 'Смещение влаж. (верх.)', type: 'number', min: -20, max: 20, step: 1, unit: '%' },
         { key: 'tempOffsetHum', label: 'Смещение темп. (увл.)', type: 'number', min: -20, max: 20, step: 1, unit: '°C' },
         { key: 'humOffsetHum', label: 'Смещение влаж. (увл.)', type: 'number', min: -20, max: 20, step: 1, unit: '%' },
-    ],
-    autoReboot: [
-        { key: 'autoRebootEnabled', label: 'Авто-перезагрузка', type: 'checkbox' },
-        { key: 'autoRebootHour', label: 'Час перезагрузки', type: 'number', min: 0, max: 23, step: 1, unit: ' ч' },
-        { key: 'autoRebootMinute', label: 'Минута перезагрузки', type: 'number', min: 0, max: 59, step: 1, unit: ' мин' },
-        { key: 'autoRebootDays', label: 'Интервал перезагрузки', type: 'number', min: 1, max: 30, step: 1, unit: ' дней' },
     ],
     statistics: [
         { key: 'resetCount', label: 'Счетчик ручных сбросов', type: 'readonly' },
@@ -408,7 +400,6 @@ async function findCharacteristics(service1, service2 = null) {
         else if (uuid.includes('26a7')) characteristics.command = char;
         else if (uuid.includes('26a8')) characteristics.humidityLogicSettings = char; // Новая
         else if (uuid.includes('26a9')) characteristics.calibrationSettings = char;   // Новая
-        else if (uuid.includes('26aa')) characteristics.autoRebootSettings = char;    // Новая
         else if (uuid.includes('26ab')) characteristics.statistics = char;             // Новая
     }
 
@@ -460,7 +451,6 @@ async function findCharacteristics(service1, service2 = null) {
     await safeStartNotify(characteristics.generalSettings, 'Общие настройки', (data) => parseAndUpdateSettingsUI(data, 'general'));
     await safeStartNotify(characteristics.humidityLogicSettings, 'Логика влажности', (data) => parseAndUpdateSettingsUI(data, 'humidityLogic'));
     await safeStartNotify(characteristics.calibrationSettings, 'Калибровка', (data) => parseAndUpdateSettingsUI(data, 'calibration'));
-    await safeStartNotify(characteristics.autoRebootSettings, 'Авто-перезагрузка', (data) => parseAndUpdateSettingsUI(data, 'autoReboot'));
     await safeStartNotify(characteristics.statistics, 'Статистика', (data) => parseAndUpdateSettingsUI(data, 'statistics'));
     
     // Существующие подписки
@@ -651,10 +641,6 @@ async function loadSettingsForGroup(groupId) {
         case 'calibration':
             char = characteristics.calibrationSettings;
             charName = 'Настройки калибровки DHT';
-            break;
-        case 'autoReboot':
-            char = characteristics.autoRebootSettings;
-            charName = 'Настройки авто-перезагрузки';
             break;
         case 'statistics':
             char = characteristics.statistics;
@@ -1093,14 +1079,12 @@ function createSettingsDisplay() {
             <button class="tab-button active" data-tab="general">Общие</button>
             <button class="tab-button" data-tab="humidityLogic">Логика влажности</button>
             <button class="tab-button" data-tab="calibration">Калибровка DHT</button>
-            <button class="tab-button" data-tab="autoReboot">Авто-перезагрузка</button>
             <button class="tab-button" data-tab="statistics">Статистика</button>
         </div>
         <div id="settings-content">
             <div id="settings-tab-general" class="settings-tab active"></div>
             <div id="settings-tab-humidityLogic" class="settings-tab"></div>
             <div id="settings-tab-calibration" class="settings-tab"></div>
-            <div id="settings-tab-autoReboot" class="settings-tab"></div>
             <div id="settings-tab-statistics" class="settings-tab"></div>
         </div>
         <div class="button-group">
@@ -1183,8 +1167,7 @@ async function sendSettingsToDevice() {
     let pendingUpdates = {
         general: [],
         humidityLogic: [],
-        calibration: [],
-        autoReboot: []
+        calibration: []
     };
 
     // Перебираем все определения настроек, чтобы найти изменения
@@ -1239,10 +1222,6 @@ async function sendSettingsToDevice() {
                 case 'calibration':
                     char = characteristics.calibrationSettings;
                     charName = 'Настройки калибровки DHT';
-                    break;
-                case 'autoReboot':
-                    char = characteristics.autoRebootSettings;
-                    charName = 'Настройки авто-перезагрузки';
                     break;
                 default:
                     log(`ERROR: Для группы '${groupId}' не определена характеристика.`, 'error');
@@ -1332,7 +1311,6 @@ function getCharUUIDByName(key) {
         case 'command': return BLE_CHAR_COMMAND_UUID;
         case 'humidityLogicSettings': return BLE_CHAR_HUMIDITY_LOGIC_SETTINGS_UUID; // Новая
         case 'calibrationSettings': return BLE_CHAR_CALIBRATION_SETTINGS_UUID;   // Новая
-        case 'autoRebootSettings': return BLE_CHAR_AUTO_REBOOT_SETTINGS_UUID;    // Новая
         case 'statistics': return BLE_CHAR_STATISTICS_UUID;             // Новая
         default: return 'UNKNOWN_UUID';
     }
@@ -1369,4 +1347,3 @@ document.addEventListener('DOMContentLoaded', () => {
     log('🚀 Веб-интерфейс загружен. Ожидание подключения...', 'info');
     updateStatus('Отключено', 'disconnected');
 });
-
