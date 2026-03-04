@@ -451,7 +451,7 @@ async function findCharacteristics(service1, service2 = null) {
     await safeStartNotify(characteristics.generalSettings, 'Общие настройки', (data) => parseAndUpdateSettingsUI(data, 'general'));
     await safeStartNotify(characteristics.humidityLogicSettings, 'Логика влажности', (data) => parseAndUpdateSettingsUI(data, 'humidityLogic'));
     await safeStartNotify(characteristics.calibrationSettings, 'Калибровка', (data) => parseAndUpdateSettingsUI(data, 'calibration'));
-    await safeStartNotify(characteristics.statistics, 'Статистика', (data) => parseAndUpdateSettingsUI(data, 'statistics'));
+    //await safeStartNotify(characteristics.statistics, 'Статистика', (data) => parseAndUpdateSettingsUI(data, 'statistics'));
     
     // Существующие подписки
     await safeStartNotify(characteristics.currentTemp, 'Температура', (data) => {
